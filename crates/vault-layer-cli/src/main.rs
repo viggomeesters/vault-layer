@@ -24,6 +24,13 @@ fn main() {
             );
             println!("writeback=disabled");
         }
+        Some("index") => {
+            let vault_path = args.next().unwrap_or_else(|| "<vault-path>".to_string());
+            println!("vault-layer index plan");
+            println!("vault_path={vault_path}");
+            println!("read_only=true");
+            println!("scanner=markdown/frontmatter/headings/wikilinks/tags");
+        }
         Some(command) if COMMANDS.contains(&command) => {
             println!("vault-layer {command}: planned MVP subcommand; implementation follows in child tasks");
         }

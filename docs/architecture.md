@@ -60,3 +60,13 @@ Planned core tables:
 ## CLI skeleton
 
 The first CLI surface reserves `init`, `index`, `search`, `context`, and `serve`. `init` already reports the external runtime state directory and keeps writeback disabled. Later tasks fill the scanner, store, retrieval, vector, and MCP behavior behind this command surface.
+
+## Scanner records
+
+The scanner produces public-safe records rather than storing private fixture content in the repo:
+
+- `NoteRecord`: path, title, modified timestamp, content hash, frontmatter pairs.
+- `SectionRecord`: deterministic chunk id, heading path, level, text, content hash.
+- `LinkRecord`: source note id, WikiLink target, raw link text.
+
+Stable IDs are derived from vault id, relative path, heading, and content hash so indexes can be rebuilt and stale embeddings detected.
