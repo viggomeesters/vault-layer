@@ -39,6 +39,7 @@ The local shadow database belongs under user data/state directories, not under t
 ## Planned MVP
 
 ```bash
+cargo run -p vault-layer -- --help
 vault-layer init /path/to/vault
 vault-layer index --limit 1000
 vault-layer search "open loops rond Supabase" --json
@@ -49,3 +50,7 @@ vault-layer serve --mcp
 ## License
 
 MIT.
+
+## Runtime state
+
+VaultLayer resolves runtime state to `VAULT_LAYER_STATE_DIR` when set, otherwise `~/.local/share/vault-layer/`. This is intentionally outside the Git checkout and outside the source vault.

@@ -56,3 +56,7 @@ Planned core tables:
 - No writeback in MVP.
 - Every result includes path, heading, chunk id, content hash, and excerpt.
 - Private sample vault data is forbidden in the repo.
+
+## CLI skeleton
+
+The first CLI surface reserves `init`, `index`, `search`, `context`, and `serve`. `init` already reports the external runtime state directory and keeps writeback disabled. Later tasks fill the scanner, store, retrieval, vector, and MCP behavior behind this command surface.
