@@ -258,7 +258,7 @@ pub fn parse_note(
         .map(|(_, value)| value.clone())
         .unwrap_or_else(|| title_from_path(relative_path));
     let human_relevance_score = human_relevance_score(&frontmatter, relative_path);
-    let sections = parse_sections(&note_id, relative_path, body, human_relevance_score);
+    let sections = parse_sections(&note_id, body, human_relevance_score);
     let links = extract_wikilinks(&note_id, content);
     let tags = extract_tags(content);
     Ok(NoteRecord {
@@ -306,13 +306,9 @@ fn parse_frontmatter(content: &str) -> (Vec<(String, String)>, &str) {
     }
 }
 
-fn parse_sections(
-    note_id: &str,
-    relative_path: &str,
-    body: &str,
-    human_relevance_score: f32,
-) -> Vec<SectionRecord> {
+fn parse_sections(note_id: &str, body: &str, human_relevance_score: f32) -> Vec<SectionRecord> {
     let mut sections = Vec::new();
+    let mut section_index = 0usize;
     let mut current_heading = String::from("root");
     let mut current_level = 0_u8;
     let mut buffer = String::new();
@@ -321,12 +317,13 @@ fn parse_sections(
             push_section(
                 &mut sections,
                 note_id,
-                relative_path,
                 &current_heading,
                 current_level,
                 &buffer,
                 human_relevance_score,
+                section_index,
             );
+            section_index += 1;
             current_heading = heading;
             current_level = level;
             buffer.clear();
@@ -338,11 +335,11 @@ fn parse_sections(
     push_section(
         &mut sections,
         note_id,
-        relative_path,
         &current_heading,
         current_level,
         &buffer,
         human_relevance_score,
+        section_index,
     );
     sections
 }
@@ -359,11 +356,11 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
 fn push_section(
     sections: &mut Vec<SectionRecord>,
     note_id: &str,
-    relative_path: &str,
     heading: &str,
     level: u8,
     text: &str,
     human_relevance_score: f32,
+    section_index: usize,
 ) {
     let trimmed = text.trim();
     if trimmed.is_empty() && heading == "root" {
@@ -372,7 +369,7 @@ fn push_section(
     let content_hash = stable_hash(trimmed);
     let id = stable_id(
         "chunk",
-        &format!("{note_id}:{relative_path}:{heading}:{content_hash}"),
+        &format!("{note_id}:{heading}:{section_index}:{content_hash}"),
     );
     sections.push(SectionRecord {
         id,
@@ -759,6 +756,33 @@ More text"
         assert_eq!(scan.notes[0].path, "Notes/public.md");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn duplicate_headings_with_same_text_get_unique_section_ids() {
+        let dir = env::temp_dir().join(format!("vault-layer-dupes-{}", stable_hash("dupes")));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create vault dir");
+        fs::write(
+            dir.join("dupes.md"),
+            "# Repeat\nsame text\n# Repeat\nsame text",
+        )
+        .expect("write note");
+
+        let scan = scan_vault(&dir).expect("scan vault");
+        let sections = &scan.notes[0].sections;
+        assert_eq!(sections.len(), 2);
+        assert_ne!(sections[0].id, sections[1].id);
+
+        let state = env::temp_dir().join(format!(
+            "vault-layer-dupes-state-{}",
+            stable_hash("dupes-state")
+        ));
+        let db_path = state.join("demo/vault-layer.db");
+        write_scan_sqlite(&scan, &dir, &db_path).expect("write sqlite without duplicate ids");
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&state);
     }
 
     #[test]
