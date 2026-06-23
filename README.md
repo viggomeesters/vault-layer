@@ -73,3 +73,12 @@ vault-layer vector-search "agent vault" --db <db> --json
 ```
 
 The initial provider is deterministic/offline for tests. Real embedding providers and native libSQL/Turso vector indexes are backend capabilities, not required for the public-safe smoke path.
+
+## MCP MVP
+
+```bash
+vault-layer serve --mcp --list-tools
+vault-layer serve --mcp --call vault_search --query "agent" --db <db>
+```
+
+See `docs/mcp.md`.
