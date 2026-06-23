@@ -260,6 +260,99 @@ pub fn stable_hash(input: &str) -> String {
     format!("{hash:016x}")
 }
 
+/// SQL schema used for local SQLite/libSQL-compatible shadow databases.
+pub const SQLITE_SCHEMA: &str = include_str!("schema.sql");
+
+/// Write a complete scan into a local SQLite database by invoking `sqlite3`.
+///
+/// This keeps the first MVP dependency-light while preserving a real DB file.
+pub fn write_scan_sqlite(scan: &VaultScan, vault_root: &Path, db_path: &Path) -> Result<(), String> {
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create state dir {}: {err}", parent.display()))?;
+    }
+    let mut sql = String::new();
+    sql.push_str(SQLITE_SCHEMA);
+    sql.push_str("
+BEGIN;
+");
+    sql.push_str("DELETE FROM sections_fts;
+DELETE FROM vaults;
+");
+    sql.push_str(&format!(
+        "INSERT INTO vaults(id, root_path, indexed_at_unix) VALUES({}, {}, strftime('%s','now'));
+",
+        sql_quote(&scan.vault_id),
+        sql_quote(&vault_root.to_string_lossy())
+    ));
+    for note in &scan.notes {
+        sql.push_str(&format!(
+            "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash) VALUES({}, {}, {}, {}, {}, {});
+",
+            sql_quote(&note.id), sql_quote(&scan.vault_id), sql_quote(&note.path), sql_quote(&note.title), note.modified_unix, sql_quote(&note.content_hash)
+        ));
+        for (key, value) in &note.frontmatter {
+            sql.push_str(&format!("INSERT INTO frontmatter(note_id, key, value) VALUES({}, {}, {});
+", sql_quote(&note.id), sql_quote(key), sql_quote(value)));
+        }
+        for tag in &note.tags {
+            sql.push_str(&format!("INSERT OR IGNORE INTO tags(note_id, tag) VALUES({}, {});
+", sql_quote(&note.id), sql_quote(tag)));
+        }
+        for link in &note.links {
+            sql.push_str(&format!("INSERT INTO links(source_note_id, target, raw) VALUES({}, {}, {});
+", sql_quote(&note.id), sql_quote(&link.target), sql_quote(&link.raw)));
+        }
+        for section in &note.sections {
+            sql.push_str(&format!(
+                "INSERT INTO sections(id, note_id, heading_path, level, text, content_hash) VALUES({}, {}, {}, {}, {}, {});
+",
+                sql_quote(&section.id), sql_quote(&note.id), sql_quote(&section.heading_path), section.level, sql_quote(&section.text), sql_quote(&section.content_hash)
+            ));
+            sql.push_str(&format!(
+                "INSERT INTO sections_fts(id, note_id, path, heading_path, text) VALUES({}, {}, {}, {}, {});
+",
+                sql_quote(&section.id), sql_quote(&note.id), sql_quote(&note.path), sql_quote(&section.heading_path), sql_quote(&section.text)
+            ));
+            sql.push_str(&format!(
+                "INSERT INTO provenance(chunk_id, note_path, heading_path, content_hash, modified_unix) VALUES({}, {}, {}, {}, {});
+",
+                sql_quote(&section.id), sql_quote(&note.path), sql_quote(&section.heading_path), sql_quote(&section.content_hash), note.modified_unix
+            ));
+        }
+    }
+    sql.push_str(&format!(
+        "INSERT INTO index_runs(id, vault_id, started_at_unix, notes_indexed) VALUES({}, {}, strftime('%s','now'), {});
+",
+        sql_quote(&stable_id("run", &format!("{}:{}", scan.vault_id, scan.notes.len()))),
+        sql_quote(&scan.vault_id),
+        scan.notes.len()
+    ));
+    sql.push_str("COMMIT;
+");
+
+    let mut child = std::process::Command::new("sqlite3")
+        .arg(db_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("spawn sqlite3: {err}"))?;
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().ok_or_else(|| "sqlite3 stdin unavailable".to_string())?;
+        stdin.write_all(sql.as_bytes()).map_err(|err| format!("write sqlite3 script: {err}"))?;
+    }
+    let output = child.wait_with_output().map_err(|err| format!("wait sqlite3: {err}"))?;
+    if !output.status.success() {
+        return Err(format!("sqlite3 failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    Ok(())
+}
+
+fn sql_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,4 +409,23 @@ More text").expect("write note");
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn writes_scan_to_sqlite_outside_repo_style_path() {
+        let dir = env::temp_dir().join(format!("vault-layer-db-vault-{}", stable_hash("db-vault")));
+        let state = env::temp_dir().join(format!("vault-layer-db-state-{}", stable_hash("db-state")));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&state);
+        fs::create_dir_all(&dir).expect("create vault dir");
+        fs::write(dir.join("note.md"), "# Hello
+SQLite shadow DB [[Target]] #db").expect("write note");
+        let scan = scan_vault(&dir).expect("scan");
+        let db_path = state.join("demo/vault-layer.db");
+        write_scan_sqlite(&scan, &dir, &db_path).expect("write sqlite");
+        assert!(db_path.exists());
+        assert!(!is_inside(&db_path, &dir));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&state);
+    }
+
 }

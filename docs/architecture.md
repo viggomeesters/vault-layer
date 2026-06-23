@@ -70,3 +70,7 @@ The scanner produces public-safe records rather than storing private fixture con
 - `LinkRecord`: source note id, WikiLink target, raw link text.
 
 Stable IDs are derived from vault id, relative path, heading, and content hash so indexes can be rebuilt and stale embeddings detected.
+
+## SQLite/libSQL shadow store
+
+The first store writes a real SQLite database through the system `sqlite3` CLI to keep the Rust MVP dependency-light. The schema is embedded from `crates/vault-layer-core/src/schema.sql` and remains libSQL/Turso-compatible where possible. Runtime DB files are written under the resolved state directory, never under the repository and never under the source vault.

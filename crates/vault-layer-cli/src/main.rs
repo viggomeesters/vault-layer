@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use vault_layer_core::{default_state_dir, COMMANDS, DEFAULT_STATE_SUBDIR};
+use vault_layer_core::{default_state_dir, scan_vault, write_scan_sqlite, RuntimeConfig, COMMANDS, DEFAULT_STATE_SUBDIR};
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -26,10 +26,31 @@ fn main() {
         }
         Some("index") => {
             let vault_path = args.next().unwrap_or_else(|| "<vault-path>".to_string());
-            println!("vault-layer index plan");
-            println!("vault_path={vault_path}");
-            println!("read_only=true");
-            println!("scanner=markdown/frontmatter/headings/wikilinks/tags");
+            let state_dir = state_dir_from_args(args.collect());
+            match RuntimeConfig::new(&vault_path, state_dir) {
+                Ok(config) => match scan_vault(&config.vault_path) {
+                    Ok(scan) => {
+                        let db_path = config.database_path(&scan.vault_id);
+                        if let Err(error) = write_scan_sqlite(&scan, &config.vault_path, &db_path) {
+                            eprintln!("index failed: {error}");
+                            std::process::exit(1);
+                        }
+                        println!("vault-layer index complete");
+                        println!("vault_path={vault_path}");
+                        println!("read_only=true");
+                        println!("notes_indexed={}", scan.notes.len());
+                        println!("db_path={}", db_path.display());
+                    }
+                    Err(error) => {
+                        eprintln!("scan failed: {error}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(error) => {
+                    eprintln!("config failed: {error}");
+                    std::process::exit(1);
+                }
+            }
         }
         Some(command) if COMMANDS.contains(&command) => {
             println!("vault-layer {command}: planned MVP subcommand; implementation follows in child tasks");
