@@ -74,3 +74,7 @@ Stable IDs are derived from vault id, relative path, heading, and content hash s
 ## SQLite/libSQL shadow store
 
 The first store writes a real SQLite database through the system `sqlite3` CLI to keep the Rust MVP dependency-light. The schema is embedded from `crates/vault-layer-core/src/schema.sql` and remains libSQL/Turso-compatible where possible. Runtime DB files are written under the resolved state directory, never under the repository and never under the source vault.
+
+## Viewer adapter
+
+Mega Vault Viewer consumes VaultLayer read models. It should not own separate parsing/indexing logic beyond UI-local cache. See `docs/viewer-adapter.md`.

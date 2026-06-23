@@ -90,3 +90,7 @@ bash scripts/wsl-smoke.sh /mnt/c/Users/Viggo/Syncthing/vault 20
 ```
 
 This reads the vault as input and writes the DB under user runtime state, never under this repo.
+
+## Mega Vault Viewer adapter
+
+Mega Vault Viewer is planned as a human UI consumer of VaultLayer. See `docs/viewer-adapter.md` for the read-model/API boundary.
