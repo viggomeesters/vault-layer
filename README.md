@@ -54,3 +54,13 @@ MIT.
 ## Runtime state
 
 VaultLayer resolves runtime state to `VAULT_LAYER_STATE_DIR` when set, otherwise `~/.local/share/vault-layer/`. This is intentionally outside the Git checkout and outside the source vault.
+
+## Retrieval MVP
+
+```bash
+vault-layer search "McCoy FO" --db ~/.local/share/vault-layer/<vault-id>/vault-layer.db --json
+vault-layer get-note "Projects/example.md" --db <db> --json
+vault-layer related "Projects/example.md" --db <db> --json
+```
+
+See `docs/api.md` for the JSON/provenance contract.

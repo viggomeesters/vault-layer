@@ -349,8 +349,12 @@ DELETE FROM vaults;
     Ok(())
 }
 
-fn sql_quote(value: &str) -> String {
+pub fn sql_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''''"))
+}
+
+fn sql_quote(value: &str) -> String {
+    sql_literal(value)
 }
 
 #[cfg(test)]
