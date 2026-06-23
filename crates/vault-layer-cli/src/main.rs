@@ -4,7 +4,7 @@ use std::process::Command;
 
 use vault_layer_core::{
     cosine_similarity, default_state_dir, deterministic_embedding, embedding_from_json,
-    embedding_to_json, scan_vault, sql_literal, write_scan_sqlite, RuntimeConfig, COMMANDS,
+    embedding_to_json, scan_vault_limited, sql_literal, write_scan_sqlite, RuntimeConfig, COMMANDS,
     DEFAULT_STATE_SUBDIR,
 };
 
@@ -49,9 +49,10 @@ fn init_command(args: Vec<String>) {
 
 fn index_command(args: Vec<String>) {
     let vault_path = args.first().cloned().unwrap_or_else(|| "<vault-path>".to_string());
+    let options = CliOptions::parse(args.clone());
     let state_dir = state_dir_from_args(args);
     match RuntimeConfig::new(&vault_path, state_dir) {
-        Ok(config) => match scan_vault(&config.vault_path) {
+        Ok(config) => match scan_vault_limited(&config.vault_path, options.limit.map(|v| v as usize)) {
             Ok(scan) => {
                 let db_path = config.database_path(&scan.vault_id);
                 if let Err(error) = write_scan_sqlite(&scan, &config.vault_path, &db_path) {
@@ -355,6 +356,7 @@ fn fail(message: &str) -> ! {
 
 fn print_help() {
     println!(
-        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
+        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands
+    --limit <N>           Limit indexed notes/results for smoke runs\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
     );
 }

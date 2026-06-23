@@ -98,9 +98,16 @@ pub struct VaultScan {
 }
 
 pub fn scan_vault(vault_path: &Path) -> Result<VaultScan, String> {
+    scan_vault_limited(vault_path, None)
+}
+
+pub fn scan_vault_limited(vault_path: &Path, limit: Option<usize>) -> Result<VaultScan, String> {
     let mut files = Vec::new();
-    collect_markdown_files(vault_path, vault_path, &mut files)?;
+    collect_markdown_files(vault_path, vault_path, &mut files, limit)?;
     files.sort();
+    if let Some(limit) = limit {
+        files.truncate(limit);
+    }
     let vault_id = stable_id("vault", &vault_path.to_string_lossy());
     let mut notes = Vec::new();
     for relative in files {
@@ -112,9 +119,19 @@ pub fn scan_vault(vault_path: &Path) -> Result<VaultScan, String> {
     Ok(VaultScan { vault_id, notes })
 }
 
-fn collect_markdown_files(root: &Path, current: &Path, out: &mut Vec<String>) -> Result<(), String> {
-    for entry in fs::read_dir(current).map_err(|err| format!("read_dir {}: {err}", current.display()))? {
-        let entry = entry.map_err(|err| format!("dir entry: {err}"))?;
+fn collect_markdown_files(root: &Path, current: &Path, out: &mut Vec<String>, limit: Option<usize>) -> Result<(), String> {
+    if limit.is_some_and(|max| out.len() >= max) {
+        return Ok(());
+    }
+    let mut entries = fs::read_dir(current)
+        .map_err(|err| format!("read_dir {}: {err}", current.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("dir entry: {err}"))?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        if limit.is_some_and(|max| out.len() >= max) {
+            break;
+        }
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -122,7 +139,7 @@ fn collect_markdown_files(root: &Path, current: &Path, out: &mut Vec<String>) ->
             continue;
         }
         if path.is_dir() {
-            collect_markdown_files(root, &path, out)?;
+            collect_markdown_files(root, &path, out, limit)?;
         } else if path.extension().is_some_and(|ext| ext == "md") {
             let relative = path.strip_prefix(root).map_err(|err| err.to_string())?;
             out.push(relative.to_string_lossy().replace('\\', "/"));

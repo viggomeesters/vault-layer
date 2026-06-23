@@ -82,3 +82,11 @@ vault-layer serve --mcp --call vault_search --query "agent" --db <db>
 ```
 
 See `docs/mcp.md`.
+
+## WSL smoke
+
+```bash
+bash scripts/wsl-smoke.sh /mnt/c/Users/Viggo/Syncthing/vault 20
+```
+
+This reads the vault as input and writes the DB under user runtime state, never under this repo.
