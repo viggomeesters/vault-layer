@@ -12,7 +12,14 @@ use std::time::UNIX_EPOCH;
 pub const DEFAULT_STATE_SUBDIR: &str = ".local/share/vault-layer";
 
 /// Commands planned for the first public CLI surface.
-pub const COMMANDS: &[&str] = &["init", "index", "search", "context", "serve", "backend-info"];
+pub const COMMANDS: &[&str] = &[
+    "init",
+    "index",
+    "search",
+    "context",
+    "serve",
+    "backend-info",
+];
 
 /// Supported storage backends. Local SQLite is the default and is fully implemented.
 /// Turso/libSQL remote is configured explicitly and never guessed from repo state.
@@ -31,15 +38,23 @@ pub struct StorageBackendConfig {
 
 impl StorageBackendConfig {
     pub fn local_sqlite() -> Self {
-        Self { kind: StorageBackendKind::LocalSqlite, database_url: None, auth_token_present: false }
+        Self {
+            kind: StorageBackendKind::LocalSqlite,
+            database_url: None,
+            auth_token_present: false,
+        }
     }
 
     pub fn from_env() -> Self {
-        match env::var("TURSO_DATABASE_URL").ok().filter(|value| !value.trim().is_empty()) {
+        match env::var("TURSO_DATABASE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        {
             Some(url) => Self {
                 kind: StorageBackendKind::TursoRemote,
                 database_url: Some(url),
-                auth_token_present: env::var("TURSO_AUTH_TOKEN").is_ok_and(|value| !value.trim().is_empty()),
+                auth_token_present: env::var("TURSO_AUTH_TOKEN")
+                    .is_ok_and(|value| !value.trim().is_empty()),
             },
             None => Self::local_sqlite(),
         }
@@ -95,7 +110,10 @@ impl RuntimeConfig {
                 vault_path.display()
             ));
         }
-        Ok(Self { vault_path, state_dir })
+        Ok(Self {
+            vault_path,
+            state_dir,
+        })
     }
 
     pub fn database_path(&self, vault_id: &str) -> PathBuf {
@@ -107,7 +125,8 @@ pub fn default_state_dir() -> Result<PathBuf, String> {
     match env::var_os("VAULT_LAYER_STATE_DIR") {
         Some(value) if !value.is_empty() => Ok(PathBuf::from(value)),
         _ => {
-            let home = env::var_os("HOME").ok_or_else(|| "HOME is not set; pass --state-dir".to_string())?;
+            let home = env::var_os("HOME")
+                .ok_or_else(|| "HOME is not set; pass --state-dir".to_string())?;
             Ok(PathBuf::from(home).join(DEFAULT_STATE_SUBDIR))
         }
     }
@@ -170,14 +189,21 @@ pub fn scan_vault_limited(vault_path: &Path, limit: Option<usize>) -> Result<Vau
     let mut notes = Vec::new();
     for relative in files {
         let absolute = vault_path.join(&relative);
-        let content = fs::read_to_string(&absolute).map_err(|err| format!("read {}: {err}", absolute.display()))?;
-        let metadata = fs::metadata(&absolute).map_err(|err| format!("metadata {}: {err}", absolute.display()))?;
+        let content = fs::read_to_string(&absolute)
+            .map_err(|err| format!("read {}: {err}", absolute.display()))?;
+        let metadata = fs::metadata(&absolute)
+            .map_err(|err| format!("metadata {}: {err}", absolute.display()))?;
         notes.push(parse_note(&vault_id, &relative, &content, &metadata)?);
     }
     Ok(VaultScan { vault_id, notes })
 }
 
-fn collect_markdown_files(root: &Path, current: &Path, out: &mut Vec<String>, limit: Option<usize>) -> Result<(), String> {
+fn collect_markdown_files(
+    root: &Path,
+    current: &Path,
+    out: &mut Vec<String>,
+    limit: Option<usize>,
+) -> Result<(), String> {
     if limit.is_some_and(|max| out.len() >= max) {
         return Ok(());
     }
@@ -206,9 +232,17 @@ fn collect_markdown_files(root: &Path, current: &Path, out: &mut Vec<String>, li
     Ok(())
 }
 
-pub fn parse_note(vault_id: &str, relative_path: &str, content: &str, metadata: &fs::Metadata) -> Result<NoteRecord, String> {
+pub fn parse_note(
+    vault_id: &str,
+    relative_path: &str,
+    content: &str,
+    metadata: &fs::Metadata,
+) -> Result<NoteRecord, String> {
     let content_hash = stable_hash(content);
-    let note_id = stable_id("note", &format!("{vault_id}:{relative_path}:{content_hash}"));
+    let note_id = stable_id(
+        "note",
+        &format!("{vault_id}:{relative_path}:{content_hash}"),
+    );
     let modified_unix = metadata
         .modified()
         .ok()
@@ -224,24 +258,43 @@ pub fn parse_note(vault_id: &str, relative_path: &str, content: &str, metadata: 
     let sections = parse_sections(&note_id, relative_path, body);
     let links = extract_wikilinks(&note_id, content);
     let tags = extract_tags(content);
-    Ok(NoteRecord { id: note_id, path: relative_path.to_string(), title, modified_unix, content_hash, frontmatter, sections, links, tags })
+    Ok(NoteRecord {
+        id: note_id,
+        path: relative_path.to_string(),
+        title,
+        modified_unix,
+        content_hash,
+        frontmatter,
+        sections,
+        links,
+        tags,
+    })
 }
 
 fn parse_frontmatter(content: &str) -> (Vec<(String, String)>, &str) {
-    if !content.starts_with("---
-") {
+    if !content.starts_with(
+        "---
+",
+    ) {
         return (Vec::new(), content);
     }
     let rest = &content[4..];
-    if let Some(end) = rest.find("
+    if let Some(end) = rest.find(
+        "
 ---
-") {
+",
+    ) {
         let raw = &rest[..end];
         let body = &rest[end + 5..];
         let pairs = raw
             .lines()
             .filter_map(|line| line.split_once(':'))
-            .map(|(key, value)| (key.trim().to_string(), value.trim().trim_matches('"').to_string()))
+            .map(|(key, value)| {
+                (
+                    key.trim().to_string(),
+                    value.trim().trim_matches('"').to_string(),
+                )
+            })
             .collect();
         (pairs, body)
     } else {
@@ -256,7 +309,14 @@ fn parse_sections(note_id: &str, relative_path: &str, body: &str) -> Vec<Section
     let mut buffer = String::new();
     for line in body.lines() {
         if let Some((level, heading)) = parse_heading(line) {
-            push_section(&mut sections, note_id, relative_path, &current_heading, current_level, &buffer);
+            push_section(
+                &mut sections,
+                note_id,
+                relative_path,
+                &current_heading,
+                current_level,
+                &buffer,
+            );
             current_heading = heading;
             current_level = level;
             buffer.clear();
@@ -265,7 +325,14 @@ fn parse_sections(note_id: &str, relative_path: &str, body: &str) -> Vec<Section
             buffer.push('\n');
         }
     }
-    push_section(&mut sections, note_id, relative_path, &current_heading, current_level, &buffer);
+    push_section(
+        &mut sections,
+        note_id,
+        relative_path,
+        &current_heading,
+        current_level,
+        &buffer,
+    );
     sections
 }
 
@@ -278,14 +345,31 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
     Some((hashes as u8, trimmed[hashes + 1..].trim().to_string()))
 }
 
-fn push_section(sections: &mut Vec<SectionRecord>, note_id: &str, relative_path: &str, heading: &str, level: u8, text: &str) {
+fn push_section(
+    sections: &mut Vec<SectionRecord>,
+    note_id: &str,
+    relative_path: &str,
+    heading: &str,
+    level: u8,
+    text: &str,
+) {
     let trimmed = text.trim();
     if trimmed.is_empty() && heading == "root" {
         return;
     }
     let content_hash = stable_hash(trimmed);
-    let id = stable_id("chunk", &format!("{note_id}:{relative_path}:{heading}:{content_hash}"));
-    sections.push(SectionRecord { id, note_id: note_id.to_string(), heading_path: heading.to_string(), level, text: trimmed.to_string(), content_hash });
+    let id = stable_id(
+        "chunk",
+        &format!("{note_id}:{relative_path}:{heading}:{content_hash}"),
+    );
+    sections.push(SectionRecord {
+        id,
+        note_id: note_id.to_string(),
+        heading_path: heading.to_string(),
+        level,
+        text: trimmed.to_string(),
+        content_hash,
+    });
 }
 
 fn extract_wikilinks(note_id: &str, content: &str) -> Vec<LinkRecord> {
@@ -293,10 +377,21 @@ fn extract_wikilinks(note_id: &str, content: &str) -> Vec<LinkRecord> {
     let mut rest = content;
     while let Some(start) = rest.find("[[") {
         rest = &rest[start + 2..];
-        let Some(end) = rest.find("]]") else { break; };
+        let Some(end) = rest.find("]]") else {
+            break;
+        };
         let raw_target = &rest[..end];
-        let target = raw_target.split('|').next().unwrap_or(raw_target).trim().to_string();
-        links.push(LinkRecord { source_note_id: note_id.to_string(), target, raw: format!("[[{raw_target}]]") });
+        let target = raw_target
+            .split('|')
+            .next()
+            .unwrap_or(raw_target)
+            .trim()
+            .to_string();
+        links.push(LinkRecord {
+            source_note_id: note_id.to_string(),
+            target,
+            raw: format!("[[{raw_target}]]"),
+        });
         rest = &rest[end + 2..];
     }
     links
@@ -305,9 +400,14 @@ fn extract_wikilinks(note_id: &str, content: &str) -> Vec<LinkRecord> {
 fn extract_tags(content: &str) -> Vec<String> {
     let mut tags = Vec::new();
     for token in content.split_whitespace() {
-        let token = token.trim_matches(|ch: char| ch == ',' || ch == '.' || ch == ';' || ch == ')' || ch == '(');
+        let token = token
+            .trim_matches(|ch: char| ch == ',' || ch == '.' || ch == ';' || ch == ')' || ch == '(');
         if let Some(tag) = token.strip_prefix('#') {
-            if !tag.is_empty() && tag.chars().all(|ch| ch.is_alphanumeric() || ch == '-' || ch == '_' || ch == '/') {
+            if !tag.is_empty()
+                && tag
+                    .chars()
+                    .all(|ch| ch.is_alphanumeric() || ch == '-' || ch == '_' || ch == '/')
+            {
                 let tag = tag.to_string();
                 if !tags.contains(&tag) {
                     tags.push(tag);
@@ -319,7 +419,11 @@ fn extract_tags(content: &str) -> Vec<String> {
 }
 
 fn title_from_path(path: &str) -> String {
-    Path::new(path).file_stem().and_then(|stem| stem.to_str()).unwrap_or(path).replace('-', " ")
+    Path::new(path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(path)
+        .replace('-', " ")
 }
 
 pub fn stable_id(prefix: &str, input: &str) -> String {
@@ -341,18 +445,27 @@ pub const SQLITE_SCHEMA: &str = include_str!("schema.sql");
 /// Write a complete scan into a local SQLite database by invoking `sqlite3`.
 ///
 /// This keeps the first MVP dependency-light while preserving a real DB file.
-pub fn write_scan_sqlite(scan: &VaultScan, vault_root: &Path, db_path: &Path) -> Result<(), String> {
+pub fn write_scan_sqlite(
+    scan: &VaultScan,
+    vault_root: &Path,
+    db_path: &Path,
+) -> Result<(), String> {
     if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent).map_err(|err| format!("create state dir {}: {err}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create state dir {}: {err}", parent.display()))?;
     }
     let mut sql = String::new();
     sql.push_str(SQLITE_SCHEMA);
-    sql.push_str("
+    sql.push_str(
+        "
 BEGIN;
-");
-    sql.push_str("DELETE FROM sections_fts;
+",
+    );
+    sql.push_str(
+        "DELETE FROM sections_fts;
 DELETE FROM vaults;
-");
+",
+    );
     sql.push_str(&format!(
         "INSERT INTO vaults(id, root_path, indexed_at_unix) VALUES({}, {}, strftime('%s','now'));
 ",
@@ -366,16 +479,30 @@ DELETE FROM vaults;
             sql_quote(&note.id), sql_quote(&scan.vault_id), sql_quote(&note.path), sql_quote(&note.title), note.modified_unix, sql_quote(&note.content_hash)
         ));
         for (key, value) in &note.frontmatter {
-            sql.push_str(&format!("INSERT INTO frontmatter(note_id, key, value) VALUES({}, {}, {});
-", sql_quote(&note.id), sql_quote(key), sql_quote(value)));
+            sql.push_str(&format!(
+                "INSERT INTO frontmatter(note_id, key, value) VALUES({}, {}, {});
+",
+                sql_quote(&note.id),
+                sql_quote(key),
+                sql_quote(value)
+            ));
         }
         for tag in &note.tags {
-            sql.push_str(&format!("INSERT OR IGNORE INTO tags(note_id, tag) VALUES({}, {});
-", sql_quote(&note.id), sql_quote(tag)));
+            sql.push_str(&format!(
+                "INSERT OR IGNORE INTO tags(note_id, tag) VALUES({}, {});
+",
+                sql_quote(&note.id),
+                sql_quote(tag)
+            ));
         }
         for link in &note.links {
-            sql.push_str(&format!("INSERT INTO links(source_note_id, target, raw) VALUES({}, {}, {});
-", sql_quote(&note.id), sql_quote(&link.target), sql_quote(&link.raw)));
+            sql.push_str(&format!(
+                "INSERT INTO links(source_note_id, target, raw) VALUES({}, {}, {});
+",
+                sql_quote(&note.id),
+                sql_quote(&link.target),
+                sql_quote(&link.raw)
+            ));
         }
         for section in &note.sections {
             sql.push_str(&format!(
@@ -402,8 +529,10 @@ DELETE FROM vaults;
         sql_quote(&scan.vault_id),
         scan.notes.len()
     ));
-    sql.push_str("COMMIT;
-");
+    sql.push_str(
+        "COMMIT;
+",
+    );
 
     let mut child = std::process::Command::new("sqlite3")
         .arg(db_path)
@@ -414,12 +543,22 @@ DELETE FROM vaults;
         .map_err(|err| format!("spawn sqlite3: {err}"))?;
     {
         use std::io::Write;
-        let stdin = child.stdin.as_mut().ok_or_else(|| "sqlite3 stdin unavailable".to_string())?;
-        stdin.write_all(sql.as_bytes()).map_err(|err| format!("write sqlite3 script: {err}"))?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "sqlite3 stdin unavailable".to_string())?;
+        stdin
+            .write_all(sql.as_bytes())
+            .map_err(|err| format!("write sqlite3 script: {err}"))?;
     }
-    let output = child.wait_with_output().map_err(|err| format!("wait sqlite3: {err}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("wait sqlite3: {err}"))?;
     if !output.status.success() {
-        return Err(format!("sqlite3 failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "sqlite3 failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }
@@ -447,7 +586,11 @@ pub fn deterministic_embedding(text: &str, dimensions: usize) -> Vec<f32> {
 }
 
 pub fn embedding_to_json(vector: &[f32]) -> String {
-    let values = vector.iter().map(|value| format!("{value:.6}")).collect::<Vec<_>>().join(",");
+    let values = vector
+        .iter()
+        .map(|value| format!("{value:.6}"))
+        .collect::<Vec<_>>()
+        .join(",");
     format!("[{values}]")
 }
 
@@ -483,13 +626,24 @@ mod tests {
 
     #[test]
     fn default_database_path_uses_external_state_dir() {
-        let config = RuntimeConfig::new("/tmp/example-vault", Some(PathBuf::from("/tmp/vault-layer-state"))).expect("valid config");
-        assert_eq!(config.database_path("demo"), PathBuf::from("/tmp/vault-layer-state/demo/vault-layer.db"));
+        let config = RuntimeConfig::new(
+            "/tmp/example-vault",
+            Some(PathBuf::from("/tmp/vault-layer-state")),
+        )
+        .expect("valid config");
+        assert_eq!(
+            config.database_path("demo"),
+            PathBuf::from("/tmp/vault-layer-state/demo/vault-layer.db")
+        );
     }
 
     #[test]
     fn rejects_state_dir_inside_vault() {
-        let error = RuntimeConfig::new("/tmp/example-vault", Some(PathBuf::from("/tmp/example-vault/.vault-layer"))).expect_err("state inside vault must be rejected");
+        let error = RuntimeConfig::new(
+            "/tmp/example-vault",
+            Some(PathBuf::from("/tmp/example-vault/.vault-layer")),
+        )
+        .expect_err("state inside vault must be rejected");
         assert!(error.contains("outside the vault"));
     }
 
@@ -507,14 +661,18 @@ mod tests {
         fs::create_dir_all(dir.join("Projects")).expect("create fixture dir");
         let note_path = dir.join("Projects/Test Note.md");
         let mut file = File::create(note_path).expect("create note");
-        writeln!(file, "---
+        writeln!(
+            file,
+            "---
 title: Agent Vault
 type: project
 ---
 # Intro
 Hello [[Other Note|alias]] #project/agent
 ## Next
-More text").expect("write note");
+More text"
+        )
+        .expect("write note");
         drop(file);
 
         let scan = scan_vault(&dir).expect("scan vault");
@@ -522,7 +680,9 @@ More text").expect("write note");
         let note = &scan.notes[0];
         assert_eq!(note.path, "Projects/Test Note.md");
         assert_eq!(note.title, "Agent Vault");
-        assert!(note.frontmatter.contains(&("type".to_string(), "project".to_string())));
+        assert!(note
+            .frontmatter
+            .contains(&("type".to_string(), "project".to_string())));
         assert_eq!(note.links[0].target, "Other Note");
         assert!(note.tags.contains(&"project/agent".to_string()));
         assert_eq!(note.sections.len(), 2);
@@ -538,7 +698,11 @@ More text").expect("write note");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(".stversions")).expect("create hidden dir");
         fs::create_dir_all(dir.join("Notes")).expect("create notes dir");
-        fs::write(dir.join(".stversions/private.md"), "# Hidden\nshould not index").expect("write hidden");
+        fs::write(
+            dir.join(".stversions/private.md"),
+            "# Hidden\nshould not index",
+        )
+        .expect("write hidden");
         fs::write(dir.join("Notes/public.md"), "# Public\nshould index").expect("write visible");
 
         let scan = scan_vault(&dir).expect("scan vault");
@@ -548,16 +712,20 @@ More text").expect("write note");
         let _ = fs::remove_dir_all(&dir);
     }
 
-
     #[test]
     fn writes_scan_to_sqlite_outside_repo_style_path() {
         let dir = env::temp_dir().join(format!("vault-layer-db-vault-{}", stable_hash("db-vault")));
-        let state = env::temp_dir().join(format!("vault-layer-db-state-{}", stable_hash("db-state")));
+        let state =
+            env::temp_dir().join(format!("vault-layer-db-state-{}", stable_hash("db-state")));
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&state);
         fs::create_dir_all(&dir).expect("create vault dir");
-        fs::write(dir.join("note.md"), "# Hello
-SQLite shadow DB [[Target]] #db").expect("write note");
+        fs::write(
+            dir.join("note.md"),
+            "# Hello
+SQLite shadow DB [[Target]] #db",
+        )
+        .expect("write note");
         let scan = scan_vault(&dir).expect("scan");
         let db_path = state.join("demo/vault-layer.db");
         write_scan_sqlite(&scan, &dir, &db_path).expect("write sqlite");
@@ -566,7 +734,6 @@ SQLite shadow DB [[Target]] #db").expect("write note");
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&state);
     }
-
 
     #[test]
     fn local_sqlite_is_default_backend() {
@@ -584,12 +751,14 @@ SQLite shadow DB [[Target]] #db").expect("write note");
             auth_token_present: true,
         };
         assert_eq!(config.backend_name(), "turso-libsql");
-        assert_eq!(config.index_write_mode(), "configured-not-written-without-explicit-sync");
+        assert_eq!(
+            config.index_write_mode(),
+            "configured-not-written-without-explicit-sync"
+        );
         assert_eq!(config.vector_mode(), "native-libsql-vector-target");
         assert!(LIBSQL_VECTOR_TARGET_SQL.contains("F32_BLOB"));
         assert!(LIBSQL_VECTOR_TARGET_SQL.contains("libsql_vector_idx"));
     }
-
 
     #[test]
     fn deterministic_embeddings_are_stable() {
@@ -600,5 +769,4 @@ SQLite shadow DB [[Target]] #db").expect("write note");
         assert!(cosine_similarity(&first, &second) > 0.99);
         assert_eq!(embedding_from_json(&embedding_to_json(&first)).len(), 8);
     }
-
 }

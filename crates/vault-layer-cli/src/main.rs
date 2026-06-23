@@ -34,7 +34,10 @@ fn main() {
 }
 
 fn init_command(args: Vec<String>) {
-    let vault_path = args.first().cloned().unwrap_or_else(|| "<vault-path>".to_string());
+    let vault_path = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "<vault-path>".to_string());
     let state_dir = state_dir_from_args(args).or_else(|| default_state_dir().ok());
     println!("VaultLayer init plan");
     println!("vault_path={vault_path}");
@@ -68,24 +71,29 @@ fn index_command(args: Vec<String>) {
     if backend.kind != vault_layer_core::StorageBackendKind::LocalSqlite {
         fail("remote Turso/libSQL sync is configured but not enabled for index writes yet; unset TURSO_DATABASE_URL or use local SQLite state");
     }
-    let vault_path = args.first().cloned().unwrap_or_else(|| "<vault-path>".to_string());
+    let vault_path = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "<vault-path>".to_string());
     let options = CliOptions::parse(args.clone());
     let state_dir = state_dir_from_args(args);
     match RuntimeConfig::new(&vault_path, state_dir) {
-        Ok(config) => match scan_vault_limited(&config.vault_path, options.limit.map(|v| v as usize)) {
-            Ok(scan) => {
-                let db_path = config.database_path(&scan.vault_id);
-                if let Err(error) = write_scan_sqlite(&scan, &config.vault_path, &db_path) {
-                    fail(&format!("index failed: {error}"));
+        Ok(config) => {
+            match scan_vault_limited(&config.vault_path, options.limit.map(|v| v as usize)) {
+                Ok(scan) => {
+                    let db_path = config.database_path(&scan.vault_id);
+                    if let Err(error) = write_scan_sqlite(&scan, &config.vault_path, &db_path) {
+                        fail(&format!("index failed: {error}"));
+                    }
+                    println!("vault-layer index complete");
+                    println!("vault_path={vault_path}");
+                    println!("read_only=true");
+                    println!("notes_indexed={}", scan.notes.len());
+                    println!("db_path={}", db_path.display());
                 }
-                println!("vault-layer index complete");
-                println!("vault_path={vault_path}");
-                println!("read_only=true");
-                println!("notes_indexed={}", scan.notes.len());
-                println!("db_path={}", db_path.display());
+                Err(error) => fail(&format!("scan failed: {error}")),
             }
-            Err(error) => fail(&format!("scan failed: {error}")),
-        },
+        }
         Err(error) => fail(&format!("config failed: {error}")),
     }
 }
@@ -162,7 +170,10 @@ fn embed_command(args: Vec<String>) {
     }
     sql.push_str("COMMIT;\n");
     run_sqlite(&db, &sql);
-    println!("{{\"model\":\"deterministic-v0\",\"dimensions\":8,\"chunks_embedded\":{}}}", rows.len());
+    println!(
+        "{{\"model\":\"deterministic-v0\",\"dimensions\":8,\"chunks_embedded\":{}}}",
+        rows.len()
+    );
 }
 
 fn vector_search_command(args: Vec<String>) {
@@ -278,10 +289,18 @@ impl CliOptions {
                 "--list-tools" => options.list_tools = true,
                 "--query" => options.query = iter.next(),
                 "--call" => options.call = iter.next(),
-                _ if arg.starts_with("--db=") => options.db = Some(PathBuf::from(arg.trim_start_matches("--db="))),
-                _ if arg.starts_with("--limit=") => options.limit = arg.trim_start_matches("--limit=").parse().ok(),
-                _ if arg.starts_with("--query=") => options.query = Some(arg.trim_start_matches("--query=").to_string()),
-                _ if arg.starts_with("--call=") => options.call = Some(arg.trim_start_matches("--call=").to_string()),
+                _ if arg.starts_with("--db=") => {
+                    options.db = Some(PathBuf::from(arg.trim_start_matches("--db=")))
+                }
+                _ if arg.starts_with("--limit=") => {
+                    options.limit = arg.trim_start_matches("--limit=").parse().ok()
+                }
+                _ if arg.starts_with("--query=") => {
+                    options.query = Some(arg.trim_start_matches("--query=").to_string())
+                }
+                _ if arg.starts_with("--call=") => {
+                    options.call = Some(arg.trim_start_matches("--call=").to_string())
+                }
                 _ => {}
             }
         }
@@ -318,7 +337,10 @@ fn print_sqlite_json(db: &PathBuf, sql: &str) {
         .output()
         .unwrap_or_else(|error| fail(&format!("sqlite3 failed to start: {error}")));
     if !output.status.success() {
-        fail(&format!("sqlite3 query failed: {}", String::from_utf8_lossy(&output.stderr)));
+        fail(&format!(
+            "sqlite3 query failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     print!("{}", String::from_utf8_lossy(&output.stdout));
 }
@@ -344,7 +366,10 @@ fn run_sqlite(db: &PathBuf, sql: &str) {
         .wait_with_output()
         .unwrap_or_else(|error| fail(&format!("sqlite3 wait failed: {error}")));
     if !output.status.success() {
-        fail(&format!("sqlite3 command failed: {}", String::from_utf8_lossy(&output.stderr)));
+        fail(&format!(
+            "sqlite3 command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 }
 
@@ -357,7 +382,10 @@ fn sqlite_table(db: &PathBuf, sql: &str) -> Vec<Vec<String>> {
         .output()
         .unwrap_or_else(|error| fail(&format!("sqlite3 failed to start: {error}")));
     if !output.status.success() {
-        fail(&format!("sqlite3 table query failed: {}", String::from_utf8_lossy(&output.stderr)));
+        fail(&format!(
+            "sqlite3 table query failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     String::from_utf8_lossy(&output.stdout)
         .lines()
