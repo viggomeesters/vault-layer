@@ -64,3 +64,12 @@ vault-layer related "Projects/example.md" --db <db> --json
 ```
 
 See `docs/api.md` for the JSON/provenance contract.
+
+## Embeddings MVP
+
+```bash
+vault-layer embed --db <db>
+vault-layer vector-search "agent vault" --db <db> --json
+```
+
+The initial provider is deterministic/offline for tests. Real embedding providers and native libSQL/Turso vector indexes are backend capabilities, not required for the public-safe smoke path.

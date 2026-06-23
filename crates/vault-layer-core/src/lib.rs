@@ -357,6 +357,49 @@ fn sql_quote(value: &str) -> String {
     sql_literal(value)
 }
 
+/// Deterministic tiny embedding provider for tests and offline smoke runs.
+///
+/// This is not semantically useful. It proves the provider/storage/query boundary
+/// without sending private vault text to an external API.
+pub fn deterministic_embedding(text: &str, dimensions: usize) -> Vec<f32> {
+    let mut vector = vec![0.0_f32; dimensions.max(1)];
+    for (index, byte) in text.as_bytes().iter().enumerate() {
+        let slot = index % vector.len();
+        vector[slot] += f32::from(*byte) / 255.0;
+    }
+    normalize(&mut vector);
+    vector
+}
+
+pub fn embedding_to_json(vector: &[f32]) -> String {
+    let values = vector.iter().map(|value| format!("{value:.6}")).collect::<Vec<_>>().join(",");
+    format!("[{values}]")
+}
+
+pub fn embedding_from_json(value: &str) -> Vec<f32> {
+    value
+        .trim_matches(|ch| ch == '[' || ch == ']')
+        .split(',')
+        .filter_map(|part| part.trim().parse::<f32>().ok())
+        .collect()
+}
+
+pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    if left.is_empty() || right.is_empty() || left.len() != right.len() {
+        return 0.0;
+    }
+    left.iter().zip(right.iter()).map(|(a, b)| a * b).sum()
+}
+
+fn normalize(vector: &mut [f32]) {
+    let magnitude = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if magnitude > 0.0 {
+        for value in vector {
+            *value /= magnitude;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +473,17 @@ SQLite shadow DB [[Target]] #db").expect("write note");
         assert!(!is_inside(&db_path, &dir));
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&state);
+    }
+
+
+    #[test]
+    fn deterministic_embeddings_are_stable() {
+        let first = deterministic_embedding("hello vault", 8);
+        let second = deterministic_embedding("hello vault", 8);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 8);
+        assert!(cosine_similarity(&first, &second) > 0.99);
+        assert_eq!(embedding_from_json(&embedding_to_json(&first)).len(), 8);
     }
 
 }

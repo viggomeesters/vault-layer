@@ -68,3 +68,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
   heading_path,
   text
 );
+
+CREATE TABLE IF NOT EXISTS embeddings (
+  chunk_id TEXT PRIMARY KEY REFERENCES sections(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  embedding_json TEXT NOT NULL,
+  -- Future libSQL/Turso native shape: embedding F32_BLOB(dimensions) with libsql_vector_idx(embedding).
+  embedded_at_unix INTEGER NOT NULL
+);
