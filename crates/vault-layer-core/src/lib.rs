@@ -138,20 +138,21 @@ pub fn is_inside(child: &Path, parent: &Path) -> bool {
     child_components.starts_with(&parent_components)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NoteRecord {
     pub id: String,
     pub path: String,
     pub title: String,
     pub modified_unix: u64,
     pub content_hash: String,
+    pub human_relevance_score: f32,
     pub frontmatter: Vec<(String, String)>,
     pub sections: Vec<SectionRecord>,
     pub links: Vec<LinkRecord>,
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SectionRecord {
     pub id: String,
     pub note_id: String,
@@ -159,6 +160,7 @@ pub struct SectionRecord {
     pub level: u8,
     pub text: String,
     pub content_hash: String,
+    pub human_relevance_score: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,7 +170,7 @@ pub struct LinkRecord {
     pub raw: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VaultScan {
     pub vault_id: String,
     pub notes: Vec<NoteRecord>,
@@ -255,7 +257,8 @@ pub fn parse_note(
         .find(|(key, _)| key == "title")
         .map(|(_, value)| value.clone())
         .unwrap_or_else(|| title_from_path(relative_path));
-    let sections = parse_sections(&note_id, relative_path, body);
+    let human_relevance_score = human_relevance_score(&frontmatter, relative_path);
+    let sections = parse_sections(&note_id, relative_path, body, human_relevance_score);
     let links = extract_wikilinks(&note_id, content);
     let tags = extract_tags(content);
     Ok(NoteRecord {
@@ -264,6 +267,7 @@ pub fn parse_note(
         title,
         modified_unix,
         content_hash,
+        human_relevance_score,
         frontmatter,
         sections,
         links,
@@ -302,7 +306,12 @@ fn parse_frontmatter(content: &str) -> (Vec<(String, String)>, &str) {
     }
 }
 
-fn parse_sections(note_id: &str, relative_path: &str, body: &str) -> Vec<SectionRecord> {
+fn parse_sections(
+    note_id: &str,
+    relative_path: &str,
+    body: &str,
+    human_relevance_score: f32,
+) -> Vec<SectionRecord> {
     let mut sections = Vec::new();
     let mut current_heading = String::from("root");
     let mut current_level = 0_u8;
@@ -316,6 +325,7 @@ fn parse_sections(note_id: &str, relative_path: &str, body: &str) -> Vec<Section
                 &current_heading,
                 current_level,
                 &buffer,
+                human_relevance_score,
             );
             current_heading = heading;
             current_level = level;
@@ -332,6 +342,7 @@ fn parse_sections(note_id: &str, relative_path: &str, body: &str) -> Vec<Section
         &current_heading,
         current_level,
         &buffer,
+        human_relevance_score,
     );
     sections
 }
@@ -352,6 +363,7 @@ fn push_section(
     heading: &str,
     level: u8,
     text: &str,
+    human_relevance_score: f32,
 ) {
     let trimmed = text.trim();
     if trimmed.is_empty() && heading == "root" {
@@ -369,6 +381,7 @@ fn push_section(
         level,
         text: trimmed.to_string(),
         content_hash,
+        human_relevance_score,
     });
 }
 
@@ -418,6 +431,35 @@ fn extract_tags(content: &str) -> Vec<String> {
     tags
 }
 
+fn human_relevance_score(frontmatter: &[(String, String)], relative_path: &str) -> f32 {
+    for key in ["human_relevance_score", "human_relevance", "human_score"] {
+        if let Some((_, value)) = frontmatter.iter().find(|(candidate, _)| candidate == key) {
+            if let Ok(score) = value.parse::<f32>() {
+                return score.clamp(0.0, 1.0);
+            }
+        }
+    }
+    if frontmatter
+        .iter()
+        .any(|(key, value)| key == "audience" && value.eq_ignore_ascii_case("system"))
+        || frontmatter.iter().any(|(key, value)| {
+            key == "system_only" && matches!(value.as_str(), "true" | "yes" | "1")
+        })
+    {
+        return 0.1;
+    }
+    if frontmatter
+        .iter()
+        .any(|(key, value)| key == "audience" && value.eq_ignore_ascii_case("human"))
+    {
+        return 0.9;
+    }
+    if relative_path.starts_with("system/") || relative_path.contains("/system/") {
+        return 0.25;
+    }
+    0.5
+}
+
 fn title_from_path(path: &str) -> String {
     Path::new(path)
         .file_stem()
@@ -454,6 +496,10 @@ pub fn write_scan_sqlite(
         fs::create_dir_all(parent)
             .map_err(|err| format!("create state dir {}: {err}", parent.display()))?;
     }
+    if db_path.exists() {
+        fs::remove_file(db_path)
+            .map_err(|err| format!("replace existing shadow db {}: {err}", db_path.display()))?;
+    }
     let mut sql = String::new();
     sql.push_str(SQLITE_SCHEMA);
     sql.push_str(
@@ -474,9 +520,9 @@ DELETE FROM vaults;
     ));
     for note in &scan.notes {
         sql.push_str(&format!(
-            "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash) VALUES({}, {}, {}, {}, {}, {});
+            "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3});
 ",
-            sql_quote(&note.id), sql_quote(&scan.vault_id), sql_quote(&note.path), sql_quote(&note.title), note.modified_unix, sql_quote(&note.content_hash)
+            sql_quote(&note.id), sql_quote(&scan.vault_id), sql_quote(&note.path), sql_quote(&note.title), note.modified_unix, sql_quote(&note.content_hash), note.human_relevance_score
         ));
         for (key, value) in &note.frontmatter {
             sql.push_str(&format!(
@@ -506,9 +552,9 @@ DELETE FROM vaults;
         }
         for section in &note.sections {
             sql.push_str(&format!(
-                "INSERT INTO sections(id, note_id, heading_path, level, text, content_hash) VALUES({}, {}, {}, {}, {}, {});
+                "INSERT INTO sections(id, note_id, heading_path, level, text, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3});
 ",
-                sql_quote(&section.id), sql_quote(&note.id), sql_quote(&section.heading_path), section.level, sql_quote(&section.text), sql_quote(&section.content_hash)
+                sql_quote(&section.id), sql_quote(&note.id), sql_quote(&section.heading_path), section.level, sql_quote(&section.text), sql_quote(&section.content_hash), section.human_relevance_score
             ));
             sql.push_str(&format!(
                 "INSERT INTO sections_fts(id, note_id, path, heading_path, text) VALUES({}, {}, {}, {}, {});
@@ -516,9 +562,9 @@ DELETE FROM vaults;
                 sql_quote(&section.id), sql_quote(&note.id), sql_quote(&note.path), sql_quote(&section.heading_path), sql_quote(&section.text)
             ));
             sql.push_str(&format!(
-                "INSERT INTO provenance(chunk_id, note_path, heading_path, content_hash, modified_unix) VALUES({}, {}, {}, {}, {});
+                "INSERT INTO provenance(chunk_id, note_path, heading_path, content_hash, modified_unix, human_relevance_score) VALUES({}, {}, {}, {}, {}, {:.3});
 ",
-                sql_quote(&section.id), sql_quote(&note.path), sql_quote(&section.heading_path), sql_quote(&section.content_hash), note.modified_unix
+                sql_quote(&section.id), sql_quote(&note.path), sql_quote(&section.heading_path), sql_quote(&section.content_hash), note.modified_unix, section.human_relevance_score
             ));
         }
     }
@@ -666,6 +712,7 @@ mod tests {
             "---
 title: Agent Vault
 type: project
+human_relevance_score: 0.8
 ---
 # Intro
 Hello [[Other Note|alias]] #project/agent
@@ -683,6 +730,8 @@ More text"
         assert!(note
             .frontmatter
             .contains(&("type".to_string(), "project".to_string())));
+        assert_eq!(note.human_relevance_score, 0.8);
+        assert_eq!(note.sections[0].human_relevance_score, 0.8);
         assert_eq!(note.links[0].target, "Other Note");
         assert!(note.tags.contains(&"project/agent".to_string()));
         assert_eq!(note.sections.len(), 2);
@@ -708,6 +757,19 @@ More text"
         let scan = scan_vault(&dir).expect("scan vault");
         assert_eq!(scan.notes.len(), 1);
         assert_eq!(scan.notes[0].path, "Notes/public.md");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn human_relevance_defaults_system_paths_lower() {
+        let dir = env::temp_dir().join(format!("vault-layer-human-{}", stable_hash("human")));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("system")).expect("create system dir");
+        fs::write(dir.join("system/agent.md"), "# Agent\nsystem context").expect("write note");
+
+        let scan = scan_vault(&dir).expect("scan vault");
+        assert_eq!(scan.notes[0].human_relevance_score, 0.25);
 
         let _ = fs::remove_dir_all(&dir);
     }

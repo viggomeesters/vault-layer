@@ -12,7 +12,7 @@
 
 **VaultLayer is a local-first database and retrieval layer for huge Markdown/Obsidian vaults.**
 
-Your vault stays plain files. VaultLayer builds a rebuildable shadow database with metadata, WikiLinks, FTS, vectors, citations, CLI, and MCP tools so humans and agents do not have to crawl 100k notes every time.
+Your vault stays plain files. VaultLayer builds a rebuildable shadow database with metadata, WikiLinks, FTS, vectors, citations, human relevance scores, CLI, and MCP tools so humans and agents do not have to crawl 100k notes every time.
 
 ## Status
 
@@ -82,7 +82,7 @@ VaultLayer treats the source vault as read-only by default.
 
 ## Product split
 
-- **VaultLayer core** — parser, stable IDs, shadow DB, search, vectors, provenance.
+- **VaultLayer core** — parser, stable IDs, shadow DB, search, vectors, provenance, human relevance scores.
 - **VaultLayer CLI/MCP** — agent and automation surface.
 - **Mega Vault Viewer** — human UI consumer of VaultLayer read models.
 

@@ -52,6 +52,13 @@ Planned core tables:
 - `index_runs`
 - `provenance`
 
+## Human relevance
+
+`notes`, `sections`, and `provenance` include `human_relevance_score` so consumers
+can choose between agent/system context and human-facing views. The score is
+source-derived from explicit frontmatter when present, otherwise conservative
+defaults keep system/agent plumbing lower than normal notes.
+
 ## Safety
 
 - Read-only vault scan by default.

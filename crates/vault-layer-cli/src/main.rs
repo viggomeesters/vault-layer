@@ -107,11 +107,11 @@ fn search_command(args: Vec<String>) {
     let like_query = format!("%{}%", query);
     let sql = format!(
         "WITH fts AS (\
-         SELECT s.id AS chunk_id, n.path, s.heading_path, snippet(sections_fts, 4, '', '', '…', 16) AS excerpt, -bm25(sections_fts) AS score, s.content_hash, n.modified_unix \
+         SELECT s.id AS chunk_id, n.path, s.heading_path, snippet(sections_fts, 4, '', '', '…', 16) AS excerpt, -bm25(sections_fts) AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
          FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id \
          WHERE sections_fts MATCH {} LIMIT {}), \
          fallback AS (\
-         SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, 0.0 AS score, s.content_hash, n.modified_unix \
+         SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, 0.0 AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
          FROM sections s JOIN notes n ON n.id = s.note_id \
          WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {}) \
          SELECT * FROM fts UNION ALL SELECT * FROM fallback WHERE NOT EXISTS (SELECT 1 FROM fts) LIMIT {};",
@@ -126,7 +126,7 @@ fn get_note_command(args: Vec<String>) {
     let db = require_db(&options);
     let like = format!("%{}%", needle);
     let sql = format!(
-        "SELECT n.id, n.path, n.title, n.modified_unix, n.content_hash, substr(group_concat(s.heading_path || ': ' || s.text, char(10)), 1, 4000) AS bounded_content \
+        "SELECT n.id, n.path, n.title, n.modified_unix, n.content_hash, n.human_relevance_score, substr(group_concat(s.heading_path || ': ' || s.text, char(10)), 1, 4000) AS bounded_content \
          FROM notes n LEFT JOIN sections s ON s.note_id = n.id \
          WHERE n.id = {} OR n.path = {} OR n.path LIKE {} GROUP BY n.id ORDER BY n.path LIMIT 1;",
         sql_literal(&needle), sql_literal(&needle), sql_literal(&like)
@@ -182,14 +182,14 @@ fn vector_search_command(args: Vec<String>) {
     let db = require_db(&options);
     let limit = options.limit.unwrap_or(10) as usize;
     let query_embedding = deterministic_embedding(&query, 8);
-    let rows = sqlite_table(&db, "SELECT e.chunk_id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, e.embedding_json FROM embeddings e JOIN sections s ON s.id = e.chunk_id JOIN notes n ON n.id = s.note_id WHERE e.model = 'deterministic-v0';");
+    let rows = sqlite_table(&db, "SELECT e.chunk_id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json FROM embeddings e JOIN sections s ON s.id = e.chunk_id JOIN notes n ON n.id = s.note_id WHERE e.model = 'deterministic-v0';");
     let mut scored = rows
         .into_iter()
         .filter_map(|row| {
-            if row.len() < 7 {
+            if row.len() < 8 {
                 return None;
             }
-            let embedding = embedding_from_json(&row[6]);
+            let embedding = embedding_from_json(&row[7]);
             let score = cosine_similarity(&query_embedding, &embedding);
             Some((score, row))
         })
@@ -201,8 +201,8 @@ fn vector_search_command(args: Vec<String>) {
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"chunk_id\":{},\"path\":{},\"heading_path\":{},\"excerpt\":{},\"score\":{:.6},\"content_hash\":{},\"modified_unix\":{}}}",
-            json_string(&row[0]), json_string(&row[1]), json_string(&row[2]), json_string(&row[3]), score, json_string(&row[4]), row[5]
+            "{{\"chunk_id\":{},\"path\":{},\"heading_path\":{},\"excerpt\":{},\"score\":{:.6},\"content_hash\":{},\"modified_unix\":{},\"human_relevance_score\":{}}}",
+            json_string(&row[0]), json_string(&row[1]), json_string(&row[2]), json_string(&row[3]), score, json_string(&row[4]), row[5], row[6]
         ));
     }
     out.push(']');
@@ -215,7 +215,7 @@ fn context_command(args: Vec<String>) {
     let db = require_db(&options);
     let like_query = format!("%{}%", query);
     let sql = format!(
-        "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 700) AS excerpt, s.content_hash, n.modified_unix \
+        "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 700) AS excerpt, s.content_hash, n.modified_unix, s.human_relevance_score \
          FROM sections s JOIN notes n ON n.id = s.note_id \
          WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {};",
         sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), options.limit.unwrap_or(8)
@@ -247,14 +247,14 @@ fn serve_command(args: Vec<String>) {
             let escaped_query = fts_query(&query);
             let like_query = format!("%{}%", query);
             let sql = format!(
-                "WITH fts AS (SELECT s.id AS chunk_id, n.path, s.heading_path, snippet(sections_fts, 4, '', '', '…', 16) AS excerpt, -bm25(sections_fts) AS score, s.content_hash, n.modified_unix FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id WHERE sections_fts MATCH {} LIMIT {}), fallback AS (SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, 0.0 AS score, s.content_hash, n.modified_unix FROM sections s JOIN notes n ON n.id = s.note_id WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {}) SELECT * FROM fts UNION ALL SELECT * FROM fallback WHERE NOT EXISTS (SELECT 1 FROM fts) LIMIT {};",
+                "WITH fts AS (SELECT s.id AS chunk_id, n.path, s.heading_path, snippet(sections_fts, 4, '', '', '…', 16) AS excerpt, -bm25(sections_fts) AS score, s.content_hash, n.modified_unix, s.human_relevance_score FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id WHERE sections_fts MATCH {} LIMIT {}), fallback AS (SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, 0.0 AS score, s.content_hash, n.modified_unix, s.human_relevance_score FROM sections s JOIN notes n ON n.id = s.note_id WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {}) SELECT * FROM fts UNION ALL SELECT * FROM fallback WHERE NOT EXISTS (SELECT 1 FROM fts) LIMIT {};",
                 sql_literal(&escaped_query), limit, sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), limit, limit
             );
             print_sqlite_json(&db, &sql);
         }
         "vault_get_note" => {
             let like = format!("%{}%", query);
-            let sql = format!("SELECT n.id, n.path, n.title, n.modified_unix, n.content_hash, substr(group_concat(s.heading_path || ': ' || s.text, char(10)), 1, 4000) AS bounded_content FROM notes n LEFT JOIN sections s ON s.note_id = n.id WHERE n.id = {} OR n.path = {} OR n.path LIKE {} GROUP BY n.id ORDER BY n.path LIMIT 1;", sql_literal(&query), sql_literal(&query), sql_literal(&like));
+            let sql = format!("SELECT n.id, n.path, n.title, n.modified_unix, n.content_hash, n.human_relevance_score, substr(group_concat(s.heading_path || ': ' || s.text, char(10)), 1, 4000) AS bounded_content FROM notes n LEFT JOIN sections s ON s.note_id = n.id WHERE n.id = {} OR n.path = {} OR n.path LIKE {} GROUP BY n.id ORDER BY n.path LIMIT 1;", sql_literal(&query), sql_literal(&query), sql_literal(&like));
             print_sqlite_json(&db, &sql);
         }
         "vault_related" => {

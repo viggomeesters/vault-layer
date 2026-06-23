@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS notes (
   title TEXT NOT NULL,
   modified_unix INTEGER NOT NULL,
   content_hash TEXT NOT NULL,
+  human_relevance_score REAL NOT NULL DEFAULT 0.5 CHECK(human_relevance_score >= 0.0 AND human_relevance_score <= 1.0),
   UNIQUE(vault_id, path)
 );
 
@@ -25,7 +26,8 @@ CREATE TABLE IF NOT EXISTS sections (
   heading_path TEXT NOT NULL,
   level INTEGER NOT NULL,
   text TEXT NOT NULL,
-  content_hash TEXT NOT NULL
+  content_hash TEXT NOT NULL,
+  human_relevance_score REAL NOT NULL DEFAULT 0.5 CHECK(human_relevance_score >= 0.0 AND human_relevance_score <= 1.0)
 );
 
 CREATE TABLE IF NOT EXISTS links (
@@ -58,7 +60,8 @@ CREATE TABLE IF NOT EXISTS provenance (
   note_path TEXT NOT NULL,
   heading_path TEXT NOT NULL,
   content_hash TEXT NOT NULL,
-  modified_unix INTEGER NOT NULL
+  modified_unix INTEGER NOT NULL,
+  human_relevance_score REAL NOT NULL DEFAULT 0.5 CHECK(human_relevance_score >= 0.0 AND human_relevance_score <= 1.0)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(

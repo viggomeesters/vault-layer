@@ -35,9 +35,24 @@ not used for index writes until a separate explicit sync command exists.
     "excerpt": "bounded text",
     "score": 1.23,
     "content_hash": "...",
-    "modified_unix": 1234567890
+    "modified_unix": 1234567890,
+    "human_relevance_score": 0.8
   }
 ]
 ```
 
 The tuple `(path, heading_path, chunk_id, content_hash, modified_unix)` is the provenance contract.
+
+
+## Human relevance score
+
+Every note/section carries `human_relevance_score` in `[0.0, 1.0]` so UI and
+agent surfaces can separate human-facing knowledge from system/agent plumbing.
+
+Current defaults:
+
+- explicit frontmatter `human_relevance_score`, `human_relevance`, or `human_score` wins and is clamped to `[0.0, 1.0]`;
+- `audience: human` => `0.9`;
+- `audience: system` or `system_only: true` => `0.1`;
+- paths under `system/` => `0.25`;
+- otherwise neutral `0.5`.

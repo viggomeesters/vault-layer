@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `human_relevance_score` to notes, sections, provenance, and cited retrieval outputs.
 - Add explicit `backend-info` command for SQLite vs Turso/libSQL capability reporting.
 - Add Turso/libSQL environment contract without enabling accidental remote index writes.
 - Skip hidden runtime folders during vault scans and fix deterministic embedding writes for multiline chunks.
