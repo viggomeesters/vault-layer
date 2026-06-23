@@ -497,86 +497,6 @@ pub fn write_scan_sqlite(
         fs::remove_file(db_path)
             .map_err(|err| format!("replace existing shadow db {}: {err}", db_path.display()))?;
     }
-    let mut sql = String::new();
-    sql.push_str(SQLITE_SCHEMA);
-    sql.push_str(
-        "
-BEGIN;
-",
-    );
-    sql.push_str(
-        "DELETE FROM sections_fts;
-DELETE FROM vaults;
-",
-    );
-    sql.push_str(&format!(
-        "INSERT INTO vaults(id, root_path, indexed_at_unix) VALUES({}, {}, strftime('%s','now'));
-",
-        sql_quote(&scan.vault_id),
-        sql_quote(&vault_root.to_string_lossy())
-    ));
-    for note in &scan.notes {
-        sql.push_str(&format!(
-            "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3});
-",
-            sql_quote(&note.id), sql_quote(&scan.vault_id), sql_quote(&note.path), sql_quote(&note.title), note.modified_unix, sql_quote(&note.content_hash), note.human_relevance_score
-        ));
-        for (key, value) in &note.frontmatter {
-            sql.push_str(&format!(
-                "INSERT INTO frontmatter(note_id, key, value) VALUES({}, {}, {});
-",
-                sql_quote(&note.id),
-                sql_quote(key),
-                sql_quote(value)
-            ));
-        }
-        for tag in &note.tags {
-            sql.push_str(&format!(
-                "INSERT OR IGNORE INTO tags(note_id, tag) VALUES({}, {});
-",
-                sql_quote(&note.id),
-                sql_quote(tag)
-            ));
-        }
-        for link in &note.links {
-            sql.push_str(&format!(
-                "INSERT INTO links(source_note_id, target, raw) VALUES({}, {}, {});
-",
-                sql_quote(&note.id),
-                sql_quote(&link.target),
-                sql_quote(&link.raw)
-            ));
-        }
-        for section in &note.sections {
-            sql.push_str(&format!(
-                "INSERT INTO sections(id, note_id, heading_path, level, text, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3});
-",
-                sql_quote(&section.id), sql_quote(&note.id), sql_quote(&section.heading_path), section.level, sql_quote(&section.text), sql_quote(&section.content_hash), section.human_relevance_score
-            ));
-            sql.push_str(&format!(
-                "INSERT INTO sections_fts(id, note_id, path, heading_path, text) VALUES({}, {}, {}, {}, {});
-",
-                sql_quote(&section.id), sql_quote(&note.id), sql_quote(&note.path), sql_quote(&section.heading_path), sql_quote(&section.text)
-            ));
-            sql.push_str(&format!(
-                "INSERT INTO provenance(chunk_id, note_path, heading_path, content_hash, modified_unix, human_relevance_score) VALUES({}, {}, {}, {}, {}, {:.3});
-",
-                sql_quote(&section.id), sql_quote(&note.path), sql_quote(&section.heading_path), sql_quote(&section.content_hash), note.modified_unix, section.human_relevance_score
-            ));
-        }
-    }
-    sql.push_str(&format!(
-        "INSERT INTO index_runs(id, vault_id, started_at_unix, notes_indexed) VALUES({}, {}, strftime('%s','now'), {});
-",
-        sql_quote(&stable_id("run", &format!("{}:{}", scan.vault_id, scan.notes.len()))),
-        sql_quote(&scan.vault_id),
-        scan.notes.len()
-    ));
-    sql.push_str(
-        "COMMIT;
-",
-    );
-
     let mut child = std::process::Command::new("sqlite3")
         .arg(db_path)
         .stdin(std::process::Stdio::piped())
@@ -591,8 +511,107 @@ DELETE FROM vaults;
             .as_mut()
             .ok_or_else(|| "sqlite3 stdin unavailable".to_string())?;
         stdin
-            .write_all(sql.as_bytes())
-            .map_err(|err| format!("write sqlite3 script: {err}"))?;
+            .write_all(SQLITE_SCHEMA.as_bytes())
+            .map_err(|err| format!("write sqlite schema: {err}"))?;
+        stdin
+            .write_all(b"\nBEGIN;\nDELETE FROM sections_fts;\nDELETE FROM vaults;\n")
+            .map_err(|err| format!("write sqlite prelude: {err}"))?;
+        writeln!(
+            stdin,
+            "INSERT INTO vaults(id, root_path, indexed_at_unix) VALUES({}, {}, strftime('%s','now'));",
+            sql_quote(&scan.vault_id),
+            sql_quote(&vault_root.to_string_lossy())
+        )
+        .map_err(|err| format!("write vault row: {err}"))?;
+        for note in &scan.notes {
+            writeln!(
+                stdin,
+                "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3});",
+                sql_quote(&note.id),
+                sql_quote(&scan.vault_id),
+                sql_quote(&note.path),
+                sql_quote(&note.title),
+                note.modified_unix,
+                sql_quote(&note.content_hash),
+                note.human_relevance_score
+            )
+            .map_err(|err| format!("write note row: {err}"))?;
+            for (key, value) in &note.frontmatter {
+                writeln!(
+                    stdin,
+                    "INSERT INTO frontmatter(note_id, key, value) VALUES({}, {}, {});",
+                    sql_quote(&note.id),
+                    sql_quote(key),
+                    sql_quote(value)
+                )
+                .map_err(|err| format!("write frontmatter row: {err}"))?;
+            }
+            for tag in &note.tags {
+                writeln!(
+                    stdin,
+                    "INSERT OR IGNORE INTO tags(note_id, tag) VALUES({}, {});",
+                    sql_quote(&note.id),
+                    sql_quote(tag)
+                )
+                .map_err(|err| format!("write tag row: {err}"))?;
+            }
+            for link in &note.links {
+                writeln!(
+                    stdin,
+                    "INSERT INTO links(source_note_id, target, raw) VALUES({}, {}, {});",
+                    sql_quote(&note.id),
+                    sql_quote(&link.target),
+                    sql_quote(&link.raw)
+                )
+                .map_err(|err| format!("write link row: {err}"))?;
+            }
+            for section in &note.sections {
+                writeln!(
+                    stdin,
+                    "INSERT INTO sections(id, note_id, heading_path, level, text, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3});",
+                    sql_quote(&section.id),
+                    sql_quote(&note.id),
+                    sql_quote(&section.heading_path),
+                    section.level,
+                    sql_quote(&section.text),
+                    sql_quote(&section.content_hash),
+                    section.human_relevance_score
+                )
+                .map_err(|err| format!("write section row: {err}"))?;
+                writeln!(
+                    stdin,
+                    "INSERT INTO sections_fts(id, note_id, path, heading_path, text) VALUES({}, {}, {}, {}, {});",
+                    sql_quote(&section.id),
+                    sql_quote(&note.id),
+                    sql_quote(&note.path),
+                    sql_quote(&section.heading_path),
+                    sql_quote(&section.text)
+                )
+                .map_err(|err| format!("write fts row: {err}"))?;
+                writeln!(
+                    stdin,
+                    "INSERT INTO provenance(chunk_id, note_path, heading_path, content_hash, modified_unix, human_relevance_score) VALUES({}, {}, {}, {}, {}, {:.3});",
+                    sql_quote(&section.id),
+                    sql_quote(&note.path),
+                    sql_quote(&section.heading_path),
+                    sql_quote(&section.content_hash),
+                    note.modified_unix,
+                    section.human_relevance_score
+                )
+                .map_err(|err| format!("write provenance row: {err}"))?;
+            }
+        }
+        writeln!(
+            stdin,
+            "INSERT INTO index_runs(id, vault_id, started_at_unix, notes_indexed) VALUES({}, {}, strftime('%s','now'), {});",
+            sql_quote(&stable_id("run", &format!("{}:{}", scan.vault_id, scan.notes.len()))),
+            sql_quote(&scan.vault_id),
+            scan.notes.len()
+        )
+        .map_err(|err| format!("write index run row: {err}"))?;
+        stdin
+            .write_all(b"COMMIT;\n")
+            .map_err(|err| format!("write sqlite commit: {err}"))?;
     }
     let output = child
         .wait_with_output()
@@ -607,7 +626,14 @@ DELETE FROM vaults;
 }
 
 pub fn sql_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''''"))
+    let sanitized = value
+        .chars()
+        .map(|ch| match ch {
+            '\0' | '\u{001a}' => ' ',
+            _ => ch,
+        })
+        .collect::<String>();
+    format!("'{}'", sanitized.replace('\'', "''"))
 }
 
 fn sql_quote(value: &str) -> String {
@@ -756,6 +782,30 @@ More text"
         assert_eq!(scan.notes[0].path, "Notes/public.md");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writes_control_char_notes_without_sql_parse_errors() {
+        let dir = env::temp_dir().join(format!("vault-layer-control-{}", stable_hash("control")));
+        let state = env::temp_dir().join(format!(
+            "vault-layer-control-state-{}",
+            stable_hash("control-state")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&state);
+        fs::create_dir_all(&dir).expect("create vault dir");
+        fs::write(
+            dir.join("control.md"),
+            b"# Control\ncontains nul \0 and sub \x1a plus quote ' safely",
+        )
+        .expect("write note");
+
+        let scan = scan_vault(&dir).expect("scan vault");
+        let db_path = state.join("demo/vault-layer.db");
+        write_scan_sqlite(&scan, &dir, &db_path).expect("write sqlite with control chars");
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&state);
     }
 
     #[test]
