@@ -43,6 +43,17 @@ Index a small synthetic or local test vault:
 cargo run -p vault-layer -- index /path/to/vault --state-dir ~/.local/share/vault-layer --limit 20
 ```
 
+Inspect the configured storage backend:
+
+```bash
+cargo run -p vault-layer -- backend-info
+```
+
+Local SQLite is the implemented default. `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`
+can be configured for the Turso/libSQL target, but remote sync is deliberately
+disabled until an explicit sync task exists; VaultLayer will not upload private
+vault text by accident.
+
 Search with citations:
 
 ```bash
@@ -67,6 +78,7 @@ VaultLayer treats the source vault as read-only by default.
 - Runtime state belongs outside both the repo and the vault, e.g. `~/.local/share/vault-layer/`.
 - Examples and tests must use synthetic fixtures.
 - Writeback is disabled in the MVP.
+- Turso/libSQL remote sync is opt-in future work; local indexing is safe now.
 
 ## Product split
 

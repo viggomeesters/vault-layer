@@ -21,6 +21,10 @@ class RepositoryGuardTests(unittest.TestCase):
         self.assertIn("SECURITY.md", guard.REQUIRED)
         self.assertIn("assets/hero.svg", guard.REQUIRED)
 
+    def test_required_public_surface_tracks_backend_env_example(self):
+        guard = load_guard()
+        self.assertIn(".env.example", guard.REQUIRED)
+
     def test_guard_blocks_generated_database_artifacts(self):
         guard = load_guard()
         patterns = "\n".join(guard.FORBIDDEN_PATH_PATTERNS)

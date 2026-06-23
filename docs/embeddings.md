@@ -22,3 +22,35 @@ SELECT * FROM vector_top_k('chunk_embedding_idx', vector32(?), 20);
 ```
 
 If native vector functions are unavailable in the local SQLite runtime, VaultLayer keeps the interface and records this as a backend capability gap rather than faking native vector support.
+
+
+## Capability modes
+
+Run:
+
+```bash
+vault-layer backend-info
+```
+
+Expected local mode:
+
+```text
+backend=sqlite
+index_write_mode=implemented
+vector_mode=portable-json-cosine
+remote_sync=false
+```
+
+Expected configured Turso/libSQL target mode:
+
+```text
+backend=turso-libsql
+database_url_configured=true
+auth_token_configured=true
+index_write_mode=configured-not-written-without-explicit-sync
+vector_mode=native-libsql-vector-target
+remote_sync=false
+```
+
+This avoids the dangerous middle state where private vault text is silently sent
+to a remote database just because an environment variable exists.

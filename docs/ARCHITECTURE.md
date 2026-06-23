@@ -59,9 +59,21 @@ Planned core tables:
 - Every result includes path, heading, chunk id, content hash, and excerpt.
 - Private sample vault data is forbidden in the repo.
 
-## CLI skeleton
+## CLI and backend contract
 
-The first CLI surface reserves `init`, `index`, `search`, `context`, and `serve`. `init` already reports the external runtime state directory and keeps writeback disabled. Later tasks fill the scanner, store, retrieval, vector, and MCP behavior behind this command surface.
+The first CLI surface reserves `init`, `index`, `search`, `context`, `serve`,
+and `backend-info`. `init` reports the external runtime state directory,
+writeback state, backend, index write mode, and vector mode.
+
+Backends are explicit:
+
+- `sqlite`: implemented local shadow DB writes and portable JSON-vector smoke search.
+- `turso-libsql`: configured target when `TURSO_DATABASE_URL` is set. It reports
+  native libSQL vector target mode, but index writes are blocked until an
+  explicit remote-sync command exists.
+
+This keeps WSL/private-vault indexing local and safe while preserving the Turso
+schema target.
 
 ## Scanner records
 

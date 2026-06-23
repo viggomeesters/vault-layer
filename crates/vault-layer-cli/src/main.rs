@@ -4,8 +4,8 @@ use std::process::Command;
 
 use vault_layer_core::{
     cosine_similarity, default_state_dir, deterministic_embedding, embedding_from_json,
-    embedding_to_json, scan_vault_limited, sql_literal, write_scan_sqlite, RuntimeConfig, COMMANDS,
-    DEFAULT_STATE_SUBDIR,
+    embedding_to_json, scan_vault_limited, sql_literal, write_scan_sqlite, RuntimeConfig,
+    StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
 };
 
 fn main() {
@@ -21,6 +21,7 @@ fn main() {
         Some("vector-search") => vector_search_command(args.collect()),
         Some("context") => context_command(args.collect()),
         Some("serve") => serve_command(args.collect()),
+        Some("backend-info") => backend_info_command(),
         Some(command) if COMMANDS.contains(&command) => {
             println!("vault-layer {command}: planned MVP subcommand; implementation follows in child tasks");
         }
@@ -45,9 +46,28 @@ fn init_command(args: Vec<String>) {
             .unwrap_or_else(|| format!("~/{DEFAULT_STATE_SUBDIR}"))
     );
     println!("writeback=disabled");
+    let backend = StorageBackendConfig::from_env();
+    println!("backend={}", backend.backend_name());
+    println!("index_write_mode={}", backend.index_write_mode());
+    println!("vector_mode={}", backend.vector_mode());
+}
+
+fn backend_info_command() {
+    let backend = StorageBackendConfig::from_env();
+    println!("backend={}", backend.backend_name());
+    println!("database_url_configured={}", backend.database_url.is_some());
+    println!("auth_token_configured={}", backend.auth_token_present);
+    println!("index_write_mode={}", backend.index_write_mode());
+    println!("vector_mode={}", backend.vector_mode());
+    println!("local_indexing=true");
+    println!("remote_sync=false");
 }
 
 fn index_command(args: Vec<String>) {
+    let backend = StorageBackendConfig::from_env();
+    if backend.kind != vault_layer_core::StorageBackendKind::LocalSqlite {
+        fail("remote Turso/libSQL sync is configured but not enabled for index writes yet; unset TURSO_DATABASE_URL or use local SQLite state");
+    }
     let vault_path = args.first().cloned().unwrap_or_else(|| "<vault-path>".to_string());
     let options = CliOptions::parse(args.clone());
     let state_dir = state_dir_from_args(args);
@@ -124,8 +144,11 @@ fn related_command(args: Vec<String>) {
 fn embed_command(args: Vec<String>) {
     let options = CliOptions::parse(args);
     let db = require_db(&options);
-    let rows = sqlite_table(&db, "SELECT id, text FROM sections ORDER BY id;");
-    let mut sql = String::from("BEGIN; DELETE FROM embeddings WHERE model = 'deterministic-v0';\n");
+    let rows = sqlite_table(
+        &db,
+        "SELECT id, replace(replace(text, char(10), ' '), char(9), ' ') FROM sections ORDER BY id;",
+    );
+    let mut sql = String::from("PRAGMA foreign_keys = ON;\nBEGIN; DELETE FROM embeddings WHERE model = 'deterministic-v0';\n");
     for row in &rows {
         if row.len() < 2 {
             continue;
@@ -301,11 +324,25 @@ fn print_sqlite_json(db: &PathBuf, sql: &str) {
 }
 
 fn run_sqlite(db: &PathBuf, sql: &str) {
-    let output = Command::new("sqlite3")
+    let mut child = Command::new("sqlite3")
         .arg(db)
-        .arg(sql)
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap_or_else(|error| fail(&format!("sqlite3 failed to start: {error}")));
+    {
+        use std::io::Write;
+        let Some(stdin) = child.stdin.as_mut() else {
+            fail("sqlite3 stdin unavailable");
+        };
+        stdin
+            .write_all(sql.as_bytes())
+            .unwrap_or_else(|error| fail(&format!("sqlite3 stdin write failed: {error}")));
+    }
+    let output = child
+        .wait_with_output()
+        .unwrap_or_else(|error| fail(&format!("sqlite3 wait failed: {error}")));
     if !output.status.success() {
         fail(&format!("sqlite3 command failed: {}", String::from_utf8_lossy(&output.stderr)));
     }
@@ -356,7 +393,7 @@ fn fail(message: &str) -> ! {
 
 fn print_help() {
     println!(
-        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands
+        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n    backend-info Report SQLite/Turso/libSQL backend and vector capability mode\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands
     --limit <N>           Limit indexed notes/results for smoke runs\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
     );
 }

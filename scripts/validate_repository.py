@@ -10,7 +10,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REQUIRED = [
     "README.md", "AGENTS.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTORS.md",
-    "SUPPORT.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "NOTICE.md",
+    ".env.example", "SUPPORT.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "NOTICE.md",
     ".editorconfig", ".github/pull_request_template.md", ".github/CODEOWNERS",
     ".github/ISSUE_TEMPLATE/config.yml", "docs/ARCHITECTURE.md", "docs/ROADMAP.md",
     "docs/REPO_COMPLETE.md", "docs/MAINTAINER_CHECKLIST.md", "docs/PACKAGE.md",

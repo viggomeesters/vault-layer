@@ -27,6 +27,11 @@
 .env.*
 !.env.example
 
+# Python/test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # OS/editor
 .DS_Store
 Thumbs.db

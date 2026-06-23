@@ -20,6 +20,12 @@ Run a bounded smoke first:
 bash scripts/wsl-smoke.sh /mnt/c/Users/Viggo/Syncthing/vault 20
 ```
 
+For WSL-mounted Windows vaults, use bounded smoke runs before full indexing.
+Large `/mnt/c` trees can be slow to enumerate from WSL. VaultLayer skips hidden
+runtime folders such as `.obsidian`, `.stversions`, `.hermes`, and `.git` by
+default, but full-vault indexing should become resumable/incremental before it is
+treated as unattended production indexing.
+
 Expected evidence:
 
 - `db_path` is under `~/.local/share/vault-layer/` or `VAULT_LAYER_STATE_DIR`.

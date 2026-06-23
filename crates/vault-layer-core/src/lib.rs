@@ -12,7 +12,65 @@ use std::time::UNIX_EPOCH;
 pub const DEFAULT_STATE_SUBDIR: &str = ".local/share/vault-layer";
 
 /// Commands planned for the first public CLI surface.
-pub const COMMANDS: &[&str] = &["init", "index", "search", "context", "serve"];
+pub const COMMANDS: &[&str] = &["init", "index", "search", "context", "serve", "backend-info"];
+
+/// Supported storage backends. Local SQLite is the default and is fully implemented.
+/// Turso/libSQL remote is configured explicitly and never guessed from repo state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageBackendKind {
+    LocalSqlite,
+    TursoRemote,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageBackendConfig {
+    pub kind: StorageBackendKind,
+    pub database_url: Option<String>,
+    pub auth_token_present: bool,
+}
+
+impl StorageBackendConfig {
+    pub fn local_sqlite() -> Self {
+        Self { kind: StorageBackendKind::LocalSqlite, database_url: None, auth_token_present: false }
+    }
+
+    pub fn from_env() -> Self {
+        match env::var("TURSO_DATABASE_URL").ok().filter(|value| !value.trim().is_empty()) {
+            Some(url) => Self {
+                kind: StorageBackendKind::TursoRemote,
+                database_url: Some(url),
+                auth_token_present: env::var("TURSO_AUTH_TOKEN").is_ok_and(|value| !value.trim().is_empty()),
+            },
+            None => Self::local_sqlite(),
+        }
+    }
+
+    pub fn backend_name(&self) -> &'static str {
+        match self.kind {
+            StorageBackendKind::LocalSqlite => "sqlite",
+            StorageBackendKind::TursoRemote => "turso-libsql",
+        }
+    }
+
+    pub fn index_write_mode(&self) -> &'static str {
+        match self.kind {
+            StorageBackendKind::LocalSqlite => "implemented",
+            StorageBackendKind::TursoRemote => "configured-not-written-without-explicit-sync",
+        }
+    }
+
+    pub fn vector_mode(&self) -> &'static str {
+        match self.kind {
+            StorageBackendKind::LocalSqlite => "portable-json-cosine",
+            StorageBackendKind::TursoRemote => "native-libsql-vector-target",
+        }
+    }
+}
+
+/// SQL fragment documenting the native libSQL/Turso vector target shape.
+/// Local SQLite keeps JSON vectors so smoke tests never require remote credentials.
+pub const LIBSQL_VECTOR_TARGET_SQL: &str =
+    "embedding F32_BLOB(1536); CREATE INDEX chunk_embedding_idx ON embeddings (libsql_vector_idx(embedding, 'metric=cosine'));";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -135,7 +193,7 @@ fn collect_markdown_files(root: &Path, current: &Path, out: &mut Vec<String>, li
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name == ".git" || name == ".obsidian" || name == ".trash" || name == "node_modules" {
+        if name.starts_with('.') || name == "node_modules" {
             continue;
         }
         if path.is_dir() {
@@ -475,6 +533,23 @@ More text").expect("write note");
     }
 
     #[test]
+    fn scanner_ignores_hidden_runtime_directories() {
+        let dir = env::temp_dir().join(format!("vault-layer-hidden-{}", stable_hash("hidden")));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".stversions")).expect("create hidden dir");
+        fs::create_dir_all(dir.join("Notes")).expect("create notes dir");
+        fs::write(dir.join(".stversions/private.md"), "# Hidden\nshould not index").expect("write hidden");
+        fs::write(dir.join("Notes/public.md"), "# Public\nshould index").expect("write visible");
+
+        let scan = scan_vault(&dir).expect("scan vault");
+        assert_eq!(scan.notes.len(), 1);
+        assert_eq!(scan.notes[0].path, "Notes/public.md");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+
+    #[test]
     fn writes_scan_to_sqlite_outside_repo_style_path() {
         let dir = env::temp_dir().join(format!("vault-layer-db-vault-{}", stable_hash("db-vault")));
         let state = env::temp_dir().join(format!("vault-layer-db-state-{}", stable_hash("db-state")));
@@ -490,6 +565,29 @@ SQLite shadow DB [[Target]] #db").expect("write note");
         assert!(!is_inside(&db_path, &dir));
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&state);
+    }
+
+
+    #[test]
+    fn local_sqlite_is_default_backend() {
+        let config = StorageBackendConfig::local_sqlite();
+        assert_eq!(config.backend_name(), "sqlite");
+        assert_eq!(config.index_write_mode(), "implemented");
+        assert_eq!(config.vector_mode(), "portable-json-cosine");
+    }
+
+    #[test]
+    fn turso_backend_is_explicit_and_vector_ready_target() {
+        let config = StorageBackendConfig {
+            kind: StorageBackendKind::TursoRemote,
+            database_url: Some("libsql://example.turso.io".to_string()),
+            auth_token_present: true,
+        };
+        assert_eq!(config.backend_name(), "turso-libsql");
+        assert_eq!(config.index_write_mode(), "configured-not-written-without-explicit-sync");
+        assert_eq!(config.vector_mode(), "native-libsql-vector-target");
+        assert!(LIBSQL_VECTOR_TARGET_SQL.contains("F32_BLOB"));
+        assert!(LIBSQL_VECTOR_TARGET_SQL.contains("libsql_vector_idx"));
     }
 
 
