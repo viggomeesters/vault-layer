@@ -48,8 +48,11 @@ Inspect the configured storage backend:
 ```bash
 cargo run -p vault-layer -- backend-info
 
-# Local open-source Turso-compatible DB, no credentials/network
-VAULT_LAYER_BACKEND=libsql-local cargo run -p vault-layer -- index /path/to/vault
+# Recommended local DuckDB projection, no credentials/network
+cargo run -p vault-layer -- index /path/to/vault
+
+# SQLite compatibility fallback
+VAULT_LAYER_BACKEND=sqlite cargo run -p vault-layer -- index /path/to/vault
 
 # Explicit remote sync to hosted Turso/libSQL (requires real credentials)
 TURSO_DATABASE_URL=libsql://your-database.turso.io \
@@ -86,8 +89,9 @@ VaultLayer treats the source vault as read-only by default.
 - Runtime state belongs outside both the repo and the vault, e.g. `~/.local/share/vault-layer/`.
 - Examples and tests must use synthetic fixtures.
 - Writeback is disabled in the MVP.
-- Local libSQL/Turso-compatible DB is implemented: set `VAULT_LAYER_BACKEND=libsql-local`; no URL/token/network.
-- Hosted Turso/libSQL remote sync is opt-in and explicit: set `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`, then run `vault-layer sync-turso <vault>` or `vault-layer index <vault> --remote-sync`.
+- DuckDB is the recommended/default local projection backend: fast local analytics over `.md` while the vault remains source of truth.
+- SQLite remains a compatibility fallback: set `VAULT_LAYER_BACKEND=sqlite`.
+- Hosted Turso/libSQL is now treated as cloud/sync/export target, not the local core.
 
 ## Product split
 

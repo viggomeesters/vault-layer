@@ -56,6 +56,13 @@ This avoids the dangerous middle state where private vault text is silently sent
 to a remote database just because an environment variable exists.
 
 
+## DuckDB local mode
+
+DuckDB is the preferred local backend for embedding metadata and future vector
+search because it is analytics-first and already has FTS/VSS extension paths.
+The current implementation keeps portable JSON vectors for deterministic offline
+smoke tests; native DuckDB VSS is the next hardening step.
+
 ## Local libSQL mode
 
 `VAULT_LAYER_BACKEND=libsql-local` stores the same portable JSON vectors in a

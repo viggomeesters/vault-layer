@@ -27,6 +27,7 @@ pub const COMMANDS: &[&str] = &[
 /// Turso/libSQL remote is configured explicitly and never guessed from repo state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageBackendKind {
+    LocalDuckdb,
     LocalSqlite,
     LocalLibsql,
     TursoRemote,
@@ -40,6 +41,14 @@ pub struct StorageBackendConfig {
 }
 
 impl StorageBackendConfig {
+    pub fn local_duckdb() -> Self {
+        Self {
+            kind: StorageBackendKind::LocalDuckdb,
+            database_url: None,
+            auth_token_present: false,
+        }
+    }
+
     pub fn local_sqlite() -> Self {
         Self {
             kind: StorageBackendKind::LocalSqlite,
@@ -62,6 +71,8 @@ impl StorageBackendConfig {
             .map(|value| value.trim().to_ascii_lowercase())
             .unwrap_or_default();
         match backend.as_str() {
+            "duckdb" | "duckdb-local" => Self::local_duckdb(),
+            "sqlite" | "sqlite-local" => Self::local_sqlite(),
             "libsql" | "libsql-local" | "turso-local" => Self::local_libsql(),
             "turso" | "turso-remote" | "libsql-remote" => match env::var("TURSO_DATABASE_URL")
                 .ok()
@@ -89,13 +100,14 @@ impl StorageBackendConfig {
                     auth_token_present: env::var("TURSO_AUTH_TOKEN")
                         .is_ok_and(|value| !value.trim().is_empty()),
                 },
-                None => Self::local_sqlite(),
+                None => Self::local_duckdb(),
             },
         }
     }
 
     pub fn backend_name(&self) -> &'static str {
         match self.kind {
+            StorageBackendKind::LocalDuckdb => "duckdb",
             StorageBackendKind::LocalSqlite => "sqlite",
             StorageBackendKind::LocalLibsql => "libsql-local",
             StorageBackendKind::TursoRemote => "turso-libsql",
@@ -104,6 +116,7 @@ impl StorageBackendConfig {
 
     pub fn index_write_mode(&self) -> &'static str {
         match self.kind {
+            StorageBackendKind::LocalDuckdb => "implemented-primary-local-analytics",
             StorageBackendKind::LocalSqlite => "implemented",
             StorageBackendKind::LocalLibsql => "implemented-local-open-source-libsql",
             StorageBackendKind::TursoRemote => "implemented-explicit-remote-sync",
@@ -112,6 +125,7 @@ impl StorageBackendConfig {
 
     pub fn vector_mode(&self) -> &'static str {
         match self.kind {
+            StorageBackendKind::LocalDuckdb => "duckdb-native-analytics-portable-json-cosine",
             StorageBackendKind::LocalSqlite => "portable-json-cosine",
             StorageBackendKind::LocalLibsql => "portable-json-cosine-on-libsql",
             StorageBackendKind::TursoRemote => "native-libsql-vector-target",
@@ -155,6 +169,10 @@ impl RuntimeConfig {
 
     pub fn database_path(&self, vault_id: &str) -> PathBuf {
         self.state_dir.join(vault_id).join("vault-layer.db")
+    }
+
+    pub fn duckdb_database_path(&self, vault_id: &str) -> PathBuf {
+        self.state_dir.join(vault_id).join("vault-layer.duckdb")
     }
 
     pub fn libsql_database_path(&self, vault_id: &str) -> PathBuf {
@@ -716,6 +734,75 @@ pub fn turso_pipeline_request_json(statements: &[String]) -> String {
     format!("{{\"requests\":[{requests}]}}")
 }
 
+pub const DUCKDB_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS vaults (
+  id TEXT PRIMARY KEY,
+  root_path TEXT NOT NULL,
+  indexed_at_unix BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notes (
+  id TEXT PRIMARY KEY,
+  vault_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  title TEXT NOT NULL,
+  modified_unix BIGINT NOT NULL,
+  content_hash TEXT NOT NULL,
+  human_relevance_score DOUBLE NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sections (
+  id TEXT PRIMARY KEY,
+  note_id TEXT NOT NULL,
+  heading_path TEXT NOT NULL,
+  level INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  human_relevance_score DOUBLE NOT NULL
+);
+CREATE TABLE IF NOT EXISTS frontmatter (note_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tags (note_id TEXT NOT NULL, tag TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS links (source_note_id TEXT NOT NULL, target TEXT NOT NULL, raw TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS provenance (
+  chunk_id TEXT PRIMARY KEY,
+  note_path TEXT NOT NULL,
+  heading_path TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  modified_unix BIGINT NOT NULL,
+  human_relevance_score DOUBLE NOT NULL
+);
+CREATE TABLE IF NOT EXISTS embeddings (chunk_id TEXT PRIMARY KEY, model TEXT NOT NULL, dimensions INTEGER NOT NULL, vector_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS index_runs (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, started_at_unix BIGINT NOT NULL, notes_indexed BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_notes_path ON notes(path);
+CREATE INDEX IF NOT EXISTS idx_sections_note_id ON sections(note_id);
+CREATE INDEX IF NOT EXISTS idx_sections_relevance ON sections(human_relevance_score);
+"#;
+
+pub fn duckdb_sync_statements(scan: &VaultScan, vault_root: &Path) -> Vec<String> {
+    let mut statements = schema_statements_from(DUCKDB_SCHEMA);
+    statements.push("BEGIN TRANSACTION".to_string());
+    statements.push("DELETE FROM embeddings".to_string());
+    statements.push("DELETE FROM provenance".to_string());
+    statements.push("DELETE FROM links".to_string());
+    statements.push("DELETE FROM tags".to_string());
+    statements.push("DELETE FROM frontmatter".to_string());
+    statements.push("DELETE FROM sections".to_string());
+    statements.push("DELETE FROM notes".to_string());
+    statements.push("DELETE FROM vaults".to_string());
+    statements.push(format!(
+        "INSERT INTO vaults(id, root_path, indexed_at_unix) VALUES({}, {}, epoch(CAST(now() AS TIMESTAMP)))",
+        sql_quote(&scan.vault_id),
+        sql_quote(&vault_root.to_string_lossy())
+    ));
+    append_row_statements(scan, &mut statements, false);
+    statements.push(format!(
+        "INSERT INTO index_runs(id, vault_id, started_at_unix, notes_indexed) VALUES({}, {}, epoch(CAST(now() AS TIMESTAMP)), {})",
+        sql_quote(&stable_id("run", &format!("{}:{}", scan.vault_id, scan.notes.len()))),
+        sql_quote(&scan.vault_id),
+        scan.notes.len()
+    ));
+    statements.push("COMMIT".to_string());
+    statements
+}
+
 pub fn turso_sync_statements(scan: &VaultScan, vault_root: &Path) -> Vec<String> {
     let mut statements = schema_statements();
     statements.push("BEGIN".to_string());
@@ -800,10 +887,87 @@ pub fn turso_sync_statements(scan: &VaultScan, vault_root: &Path) -> Vec<String>
     statements
 }
 
+fn append_row_statements(
+    scan: &VaultScan,
+    statements: &mut Vec<String>,
+    include_sections_fts: bool,
+) {
+    for note in &scan.notes {
+        statements.push(format!(
+            "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3})",
+            sql_quote(&note.id),
+            sql_quote(&scan.vault_id),
+            sql_quote(&note.path),
+            sql_quote(&note.title),
+            note.modified_unix,
+            sql_quote(&note.content_hash),
+            note.human_relevance_score
+        ));
+        for (key, value) in &note.frontmatter {
+            statements.push(format!(
+                "INSERT INTO frontmatter(note_id, key, value) VALUES({}, {}, {})",
+                sql_quote(&note.id),
+                sql_quote(key),
+                sql_quote(value)
+            ));
+        }
+        for tag in &note.tags {
+            statements.push(format!(
+                "INSERT INTO tags(note_id, tag) VALUES({}, {})",
+                sql_quote(&note.id),
+                sql_quote(tag)
+            ));
+        }
+        for link in &note.links {
+            statements.push(format!(
+                "INSERT INTO links(source_note_id, target, raw) VALUES({}, {}, {})",
+                sql_quote(&note.id),
+                sql_quote(&link.target),
+                sql_quote(&link.raw)
+            ));
+        }
+        for section in &note.sections {
+            statements.push(format!(
+                "INSERT INTO sections(id, note_id, heading_path, level, text, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3})",
+                sql_quote(&section.id),
+                sql_quote(&note.id),
+                sql_quote(&section.heading_path),
+                section.level,
+                sql_quote(&section.text),
+                sql_quote(&section.content_hash),
+                section.human_relevance_score
+            ));
+            if include_sections_fts {
+                statements.push(format!(
+                    "INSERT INTO sections_fts(id, note_id, path, heading_path, text) VALUES({}, {}, {}, {}, {})",
+                    sql_quote(&section.id),
+                    sql_quote(&note.id),
+                    sql_quote(&note.path),
+                    sql_quote(&section.heading_path),
+                    sql_quote(&section.text)
+                ));
+            }
+            statements.push(format!(
+                "INSERT INTO provenance(chunk_id, note_path, heading_path, content_hash, modified_unix, human_relevance_score) VALUES({}, {}, {}, {}, {}, {:.3})",
+                sql_quote(&section.id),
+                sql_quote(&note.path),
+                sql_quote(&section.heading_path),
+                sql_quote(&section.content_hash),
+                note.modified_unix,
+                section.human_relevance_score
+            ));
+        }
+    }
+}
+
 fn schema_statements() -> Vec<String> {
+    schema_statements_from(SQLITE_SCHEMA)
+}
+
+fn schema_statements_from(schema: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current = String::new();
-    for line in SQLITE_SCHEMA.lines() {
+    for line in schema.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("--") {
             continue;
@@ -1069,6 +1233,23 @@ SQLite shadow DB [[Target]] #db",
         assert!(!is_inside(&db_path, &dir));
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&state);
+    }
+
+    #[test]
+    fn local_duckdb_is_default_backend() {
+        let config = StorageBackendConfig::local_duckdb();
+        assert_eq!(config.kind, StorageBackendKind::LocalDuckdb);
+        assert_eq!(config.backend_name(), "duckdb");
+        assert_eq!(
+            config.index_write_mode(),
+            "implemented-primary-local-analytics"
+        );
+        assert_eq!(
+            config.vector_mode(),
+            "duckdb-native-analytics-portable-json-cosine"
+        );
+        assert!(config.database_url.is_none());
+        assert!(!config.auth_token_present);
     }
 
     #[test]

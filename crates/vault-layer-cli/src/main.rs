@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use vault_layer_core::{
-    cosine_similarity, default_state_dir, deterministic_embedding, embedding_from_json,
-    embedding_to_json, scan_vault_limited, sql_literal, turso_pipeline_request_json,
-    turso_pipeline_url, turso_sync_statements, write_scan_sqlite, RuntimeConfig,
-    StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
+    cosine_similarity, default_state_dir, deterministic_embedding, duckdb_sync_statements,
+    embedding_from_json, embedding_to_json, scan_vault_limited, sql_literal,
+    turso_pipeline_request_json, turso_pipeline_url, turso_sync_statements, write_scan_sqlite,
+    RuntimeConfig, StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
 };
 
 fn main() {
@@ -95,22 +95,34 @@ fn index_command(args: Vec<String>) {
         Ok(config) => {
             match scan_vault_limited(&config.vault_path, options.limit.map(|v| v as usize)) {
                 Ok(scan) => {
-                    let db_path = if backend.kind
-                        == vault_layer_core::StorageBackendKind::LocalLibsql
-                    {
-                        let db_path = config.libsql_database_path(&scan.vault_id);
-                        if let Err(error) =
-                            write_scan_libsql_local(&scan, &config.vault_path, &db_path)
-                        {
-                            fail(&format!("index failed: {error}"));
+                    let db_path = match backend.kind {
+                        vault_layer_core::StorageBackendKind::LocalDuckdb => {
+                            let db_path = config.duckdb_database_path(&scan.vault_id);
+                            if let Err(error) =
+                                write_scan_duckdb(&scan, &config.vault_path, &db_path)
+                            {
+                                fail(&format!("index failed: {error}"));
+                            }
+                            db_path
                         }
-                        db_path
-                    } else {
-                        let db_path = config.database_path(&scan.vault_id);
-                        if let Err(error) = write_scan_sqlite(&scan, &config.vault_path, &db_path) {
-                            fail(&format!("index failed: {error}"));
+                        vault_layer_core::StorageBackendKind::LocalLibsql => {
+                            let db_path = config.libsql_database_path(&scan.vault_id);
+                            if let Err(error) =
+                                write_scan_libsql_local(&scan, &config.vault_path, &db_path)
+                            {
+                                fail(&format!("index failed: {error}"));
+                            }
+                            db_path
                         }
-                        db_path
+                        _ => {
+                            let db_path = config.database_path(&scan.vault_id);
+                            if let Err(error) =
+                                write_scan_sqlite(&scan, &config.vault_path, &db_path)
+                            {
+                                fail(&format!("index failed: {error}"));
+                            }
+                            db_path
+                        }
                     };
                     println!("vault-layer index complete");
                     println!("vault_path={vault_path}");
@@ -124,6 +136,25 @@ fn index_command(args: Vec<String>) {
         }
         Err(error) => fail(&format!("config failed: {error}")),
     }
+}
+
+fn write_scan_duckdb(
+    scan: &vault_layer_core::VaultScan,
+    vault_root: &std::path::Path,
+    db_path: &std::path::Path,
+) -> Result<(), String> {
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create duckdb dir: {err}"))?;
+    }
+    if db_path.exists() {
+        fs::remove_file(db_path).map_err(|err| format!("replace duckdb db: {err}"))?;
+    }
+    let conn = duckdb::Connection::open(db_path).map_err(|err| format!("open duckdb: {err}"))?;
+    for statement in duckdb_sync_statements(scan, vault_root) {
+        conn.execute_batch(&statement)
+            .map_err(|err| format!("execute duckdb: {err}; sql={statement}"))?;
+    }
+    Ok(())
 }
 
 fn write_scan_libsql_local(
@@ -242,21 +273,15 @@ fn search_command(args: Vec<String>) {
     let options = CliOptions::parse(rest);
     let db = require_db(&options);
     let limit = options.limit.unwrap_or(10);
-    let escaped_query = fts_query(&query);
     let like_query = format!("%{}%", query);
     let sql = format!(
-        "WITH fts AS (\
-         SELECT s.id AS chunk_id, n.path, s.heading_path, snippet(sections_fts, 4, '', '', '…', 16) AS excerpt, -bm25(sections_fts) AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
-         FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id \
-         WHERE sections_fts MATCH {} LIMIT {}), \
-         fallback AS (\
-         SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, 0.0 AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
+        "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, CAST(0.0 AS DOUBLE) AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
          FROM sections s JOIN notes n ON n.id = s.note_id \
-         WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {}) \
-         SELECT * FROM fts UNION ALL SELECT * FROM fallback WHERE NOT EXISTS (SELECT 1 FROM fts) LIMIT {};",
-        sql_literal(&escaped_query), limit, sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), limit, limit
+         WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} \
+         ORDER BY s.human_relevance_score DESC, n.modified_unix DESC LIMIT {};",
+        sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), limit
     );
-    print_sqlite_json(&db, &sql);
+    print_query_json(&db, &sql);
 }
 
 fn get_note_command(args: Vec<String>) {
@@ -270,7 +295,7 @@ fn get_note_command(args: Vec<String>) {
          WHERE n.id = {} OR n.path = {} OR n.path LIKE {} GROUP BY n.id ORDER BY n.path LIMIT 1;",
         sql_literal(&needle), sql_literal(&needle), sql_literal(&like)
     );
-    print_sqlite_json(&db, &sql);
+    print_query_json(&db, &sql);
 }
 
 fn related_command(args: Vec<String>) {
@@ -285,7 +310,7 @@ fn related_command(args: Vec<String>) {
          SELECT 'outgoing' AS kind, relation, evidence FROM outgoing UNION ALL SELECT 'incoming' AS kind, relation, evidence FROM incoming LIMIT 25;",
         sql_literal(&needle), sql_literal(&needle), sql_literal(&like)
     );
-    print_sqlite_json(&db, &sql);
+    print_query_json(&db, &sql);
 }
 
 fn embed_command(args: Vec<String>) {
@@ -359,7 +384,7 @@ fn context_command(args: Vec<String>) {
          WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {};",
         sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), options.limit.unwrap_or(8)
     );
-    print_sqlite_json(&db, &sql);
+    print_query_json(&db, &sql);
 }
 
 fn serve_command(args: Vec<String>) {
@@ -383,23 +408,19 @@ fn serve_command(args: Vec<String>) {
     match call {
         "vault_search" => {
             let limit = options.limit.unwrap_or(10);
-            let escaped_query = fts_query(&query);
             let like_query = format!("%{}%", query);
-            let sql = format!(
-                "WITH fts AS (SELECT s.id AS chunk_id, n.path, s.heading_path, snippet(sections_fts, 4, '', '', '…', 16) AS excerpt, -bm25(sections_fts) AS score, s.content_hash, n.modified_unix, s.human_relevance_score FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id WHERE sections_fts MATCH {} LIMIT {}), fallback AS (SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, 0.0 AS score, s.content_hash, n.modified_unix, s.human_relevance_score FROM sections s JOIN notes n ON n.id = s.note_id WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {}) SELECT * FROM fts UNION ALL SELECT * FROM fallback WHERE NOT EXISTS (SELECT 1 FROM fts) LIMIT {};",
-                sql_literal(&escaped_query), limit, sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), limit, limit
-            );
-            print_sqlite_json(&db, &sql);
+            let sql = format!("SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, CAST(0.0 AS DOUBLE) AS score, s.content_hash, n.modified_unix, s.human_relevance_score FROM sections s JOIN notes n ON n.id = s.note_id WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} ORDER BY s.human_relevance_score DESC, n.modified_unix DESC LIMIT {};", sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), limit);
+            print_query_json(&db, &sql);
         }
         "vault_get_note" => {
             let like = format!("%{}%", query);
             let sql = format!("SELECT n.id, n.path, n.title, n.modified_unix, n.content_hash, n.human_relevance_score, substr(group_concat(s.heading_path || ': ' || s.text, char(10)), 1, 4000) AS bounded_content FROM notes n LEFT JOIN sections s ON s.note_id = n.id WHERE n.id = {} OR n.path = {} OR n.path LIKE {} GROUP BY n.id ORDER BY n.path LIMIT 1;", sql_literal(&query), sql_literal(&query), sql_literal(&like));
-            print_sqlite_json(&db, &sql);
+            print_query_json(&db, &sql);
         }
         "vault_related" => {
             let like = format!("%{}%", query);
             let sql = format!("WITH base AS (SELECT id, path FROM notes WHERE id = {} OR path = {} OR path LIKE {} LIMIT 1), outgoing AS (SELECT l.target AS relation, l.raw AS evidence FROM links l JOIN base b ON b.id = l.source_note_id), incoming AS (SELECT n.path AS relation, l.raw AS evidence FROM links l JOIN notes n ON n.id = l.source_note_id JOIN base b ON l.target = replace(b.path, '.md', '')) SELECT 'outgoing' AS kind, relation, evidence FROM outgoing UNION ALL SELECT 'incoming' AS kind, relation, evidence FROM incoming LIMIT 25;", sql_literal(&query), sql_literal(&query), sql_literal(&like));
-            print_sqlite_json(&db, &sql);
+            print_query_json(&db, &sql);
         }
         other => fail(&format!("unknown MCP tool: {other}")),
     }
@@ -461,13 +482,109 @@ fn require_db(options: &CliOptions) -> PathBuf {
     })
 }
 
-fn fts_query(query: &str) -> String {
-    query
-        .split_whitespace()
-        .map(|part| part.trim_matches(|ch: char| !ch.is_alphanumeric()))
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" AND ")
+fn print_query_json(db: &PathBuf, sql: &str) {
+    if db.extension().and_then(|value| value.to_str()) == Some("duckdb") {
+        print_duckdb_json(db, sql);
+    } else {
+        print_sqlite_json(db, sql);
+    }
+}
+
+fn print_duckdb_json(db: &PathBuf, sql: &str) {
+    let conn = duckdb::Connection::open(db)
+        .unwrap_or_else(|error| fail(&format!("duckdb query failed to start: {error}")));
+    let mut stmt = conn
+        .prepare(sql)
+        .unwrap_or_else(|error| fail(&format!("duckdb query prepare failed: {error}")));
+    let column_names = duckdb_column_names_for(sql);
+    let mut rows = stmt
+        .query([])
+        .unwrap_or_else(|error| fail(&format!("duckdb query failed: {error}")));
+    let mut out = String::from("[");
+    let mut row_index = 0usize;
+    while let Some(row) = rows
+        .next()
+        .unwrap_or_else(|error| fail(&format!("duckdb row failed: {error}")))
+    {
+        if row_index > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        for (index, name) in column_names.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let value = row_to_json_value(row, index);
+            out.push_str(&format!("{}:{}", json_string(name), value));
+        }
+        out.push('}');
+        row_index += 1;
+    }
+    out.push(']');
+    println!("{out}");
+}
+
+fn duckdb_column_names_for(sql: &str) -> Vec<String> {
+    if sql.contains("bounded_content") {
+        return [
+            "id",
+            "path",
+            "title",
+            "modified_unix",
+            "content_hash",
+            "human_relevance_score",
+            "bounded_content",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+    }
+    if sql.contains(" AS kind") && sql.contains("relation") {
+        return ["kind", "relation", "evidence"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
+    }
+    if sql.contains(" AS chunk_id") || sql.contains("s.id AS chunk_id") {
+        return [
+            "chunk_id",
+            "path",
+            "heading_path",
+            "excerpt",
+            "score",
+            "content_hash",
+            "modified_unix",
+            "human_relevance_score",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+    }
+    Vec::new()
+}
+
+fn row_to_json_value(row: &duckdb::Row<'_>, index: usize) -> String {
+    match row.get_ref(index) {
+        Ok(duckdb::types::ValueRef::Null) => "null".to_string(),
+        Ok(duckdb::types::ValueRef::Boolean(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::TinyInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::SmallInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::Int(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::BigInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::HugeInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::UTinyInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::USmallInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::UInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::UBigInt(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::Float(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::Double(value)) => value.to_string(),
+        Ok(duckdb::types::ValueRef::Text(value)) => json_string(&String::from_utf8_lossy(value)),
+        Ok(duckdb::types::ValueRef::Blob(value)) => {
+            json_string(&format!("<{} bytes>", value.len()))
+        }
+        Ok(other) => json_string(&format!("{other:?}")),
+        Err(_) => "null".to_string(),
+    }
 }
 
 fn print_sqlite_json(db: &PathBuf, sql: &str) {

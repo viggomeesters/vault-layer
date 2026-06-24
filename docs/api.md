@@ -17,11 +17,12 @@ vault-layer context "query" --db <db> --json
 
 `backend-info` reports the active backend and capability mode:
 
-- default: `backend=sqlite`, `index_write_mode=implemented`, `vector_mode=portable-json-cosine`;
+- default: `backend=duckdb`, `index_write_mode=implemented-primary-local-analytics`, `vector_mode=duckdb-native-analytics-portable-json-cosine`;
+- with `VAULT_LAYER_BACKEND=sqlite`: `backend=sqlite`, `index_write_mode=implemented`, `vector_mode=portable-json-cosine`;
 - with `VAULT_LAYER_BACKEND=libsql-local`: `backend=libsql-local`, `database_url_configured=false`, `auth_token_configured=false`, `index_write_mode=implemented-local-open-source-libsql`;
 - with `TURSO_DATABASE_URL`: `backend=turso-libsql`, `vector_mode=native-libsql-vector-target`, `remote_sync=implemented-explicit`.
 
-That split is intentional. Local vault indexing can write either a SQLite shadow DB or an embedded local libSQL DB (`vault-layer.libsql`) today. Hosted Turso/libSQL remote sync is implemented through the libSQL HTTPS pipeline,
+That split is intentional. Local vault indexing writes a DuckDB projection DB by default (`vault-layer.duckdb`), with SQLite and embedded libSQL available as secondary adapters. Hosted Turso/libSQL remote sync is implemented through the libSQL HTTPS pipeline,
 but it only runs when explicitly invoked with `sync-turso` or `index --remote-sync`.
 
 ## Search result shape
@@ -81,3 +82,15 @@ VAULT_LAYER_BACKEND=libsql-local vault-layer index /path/to/vault
 This uses embedded `libsql::Builder::new_local(...)`, writes `vault-layer.libsql`
 under the external state directory, and requires no `TURSO_DATABASE_URL`,
 `TURSO_AUTH_TOKEN`, SaaS account, or network.
+
+
+## DuckDB projection backend
+
+```bash
+vault-layer index /path/to/vault
+vault-layer search "query" --db ~/.local/share/vault-layer/<vault_id>/vault-layer.duckdb --json
+```
+
+DuckDB is the recommended local backend for VaultLayer: the Markdown vault stays
+read-only and source-of-truth, while `vault-layer.duckdb` becomes the rebuildable
+projection for fast retrieval, analytics, aggregations, and future FTS/VSS.

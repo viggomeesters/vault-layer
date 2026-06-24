@@ -99,3 +99,12 @@ The first store writes a real SQLite database through the system `sqlite3` CLI t
 ## Viewer adapter
 
 Mega Vault Viewer consumes VaultLayer read models. It should not own separate parsing/indexing logic beyond UI-local cache. See `docs/viewer-adapter.md`.
+
+
+## DuckDB projection store
+
+DuckDB is the recommended local backend. It is used as a rebuildable projection
+over Markdown: notes, sections, frontmatter, tags, links, provenance, index runs,
+and embeddings live outside the vault under the state directory. This matches the
+core product shape: users keep editing `.md`; VaultLayer provides fast local
+operations and retrieval over the derived database.
