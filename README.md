@@ -48,7 +48,10 @@ Inspect the configured storage backend:
 ```bash
 cargo run -p vault-layer -- backend-info
 
-# Explicit remote sync to Turso/libSQL (requires real credentials)
+# Local open-source Turso-compatible DB, no credentials/network
+VAULT_LAYER_BACKEND=libsql-local cargo run -p vault-layer -- index /path/to/vault
+
+# Explicit remote sync to hosted Turso/libSQL (requires real credentials)
 TURSO_DATABASE_URL=libsql://your-database.turso.io \
 TURSO_AUTH_TOKEN=*** \
 cargo run -p vault-layer -- sync-turso /path/to/vault --limit 100
@@ -83,7 +86,8 @@ VaultLayer treats the source vault as read-only by default.
 - Runtime state belongs outside both the repo and the vault, e.g. `~/.local/share/vault-layer/`.
 - Examples and tests must use synthetic fixtures.
 - Writeback is disabled in the MVP.
-- Turso/libSQL remote sync is opt-in and explicit: set `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`, then run `vault-layer sync-turso <vault>` or `vault-layer index <vault> --remote-sync`.
+- Local libSQL/Turso-compatible DB is implemented: set `VAULT_LAYER_BACKEND=libsql-local`; no URL/token/network.
+- Hosted Turso/libSQL remote sync is opt-in and explicit: set `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`, then run `vault-layer sync-turso <vault>` or `vault-layer index <vault> --remote-sync`.
 
 ## Product split
 

@@ -84,7 +84,7 @@ fn index_command(args: Vec<String>) {
             sync_turso_command(args);
             return;
         }
-        fail("Turso/libSQL is configured. Pass --remote-sync to write the vault index to Turso, or unset TURSO_DATABASE_URL for local SQLite only.");
+        fail("Remote Turso/libSQL is configured. Pass --remote-sync to upload, or use VAULT_LAYER_BACKEND=libsql-local for a local open-source Turso DB.");
     }
     let vault_path = args
         .first()
@@ -95,13 +95,27 @@ fn index_command(args: Vec<String>) {
         Ok(config) => {
             match scan_vault_limited(&config.vault_path, options.limit.map(|v| v as usize)) {
                 Ok(scan) => {
-                    let db_path = config.database_path(&scan.vault_id);
-                    if let Err(error) = write_scan_sqlite(&scan, &config.vault_path, &db_path) {
-                        fail(&format!("index failed: {error}"));
-                    }
+                    let db_path = if backend.kind
+                        == vault_layer_core::StorageBackendKind::LocalLibsql
+                    {
+                        let db_path = config.libsql_database_path(&scan.vault_id);
+                        if let Err(error) =
+                            write_scan_libsql_local(&scan, &config.vault_path, &db_path)
+                        {
+                            fail(&format!("index failed: {error}"));
+                        }
+                        db_path
+                    } else {
+                        let db_path = config.database_path(&scan.vault_id);
+                        if let Err(error) = write_scan_sqlite(&scan, &config.vault_path, &db_path) {
+                            fail(&format!("index failed: {error}"));
+                        }
+                        db_path
+                    };
                     println!("vault-layer index complete");
                     println!("vault_path={vault_path}");
                     println!("read_only=true");
+                    println!("backend={}", backend.backend_name());
                     println!("notes_indexed={}", scan.notes.len());
                     println!("db_path={}", db_path.display());
                 }
@@ -110,6 +124,36 @@ fn index_command(args: Vec<String>) {
         }
         Err(error) => fail(&format!("config failed: {error}")),
     }
+}
+
+fn write_scan_libsql_local(
+    scan: &vault_layer_core::VaultScan,
+    vault_root: &std::path::Path,
+    db_path: &std::path::Path,
+) -> Result<(), String> {
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create libsql dir: {err}"))?;
+    }
+    if db_path.exists() {
+        fs::remove_file(db_path).map_err(|err| format!("replace libsql db: {err}"))?;
+    }
+    let statements = turso_sync_statements(scan, vault_root);
+    let runtime = tokio::runtime::Runtime::new().map_err(|err| format!("start tokio: {err}"))?;
+    runtime.block_on(async {
+        let db = libsql::Builder::new_local(db_path)
+            .build()
+            .await
+            .map_err(|err| format!("open local libsql: {err}"))?;
+        let conn = db
+            .connect()
+            .map_err(|err| format!("connect local libsql: {err}"))?;
+        for statement in statements {
+            conn.execute_batch(&statement)
+                .await
+                .map_err(|err| format!("execute local libsql: {err}; sql={statement}"))?;
+        }
+        Ok::<(), String>(())
+    })
 }
 
 fn sync_turso_command(args: Vec<String>) {

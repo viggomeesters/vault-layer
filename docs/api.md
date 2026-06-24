@@ -18,10 +18,10 @@ vault-layer context "query" --db <db> --json
 `backend-info` reports the active backend and capability mode:
 
 - default: `backend=sqlite`, `index_write_mode=implemented`, `vector_mode=portable-json-cosine`;
+- with `VAULT_LAYER_BACKEND=libsql-local`: `backend=libsql-local`, `database_url_configured=false`, `auth_token_configured=false`, `index_write_mode=implemented-local-open-source-libsql`;
 - with `TURSO_DATABASE_URL`: `backend=turso-libsql`, `vector_mode=native-libsql-vector-target`, `remote_sync=implemented-explicit`.
 
-That split is intentional. Local vault indexing writes a real SQLite shadow DB
-today. Turso/libSQL remote sync is implemented through the libSQL HTTPS pipeline,
+That split is intentional. Local vault indexing can write either a SQLite shadow DB or an embedded local libSQL DB (`vault-layer.libsql`) today. Hosted Turso/libSQL remote sync is implemented through the libSQL HTTPS pipeline,
 but it only runs when explicitly invoked with `sync-turso` or `index --remote-sync`.
 
 ## Search result shape
@@ -70,3 +70,14 @@ vault-layer sync-turso /path/to/vault --limit 100
 rows into libSQL `/v2/pipeline` execute requests, and sends them in batches over
 HTTPS. `vault-layer index <vault> --remote-sync` routes to the same implementation
 when `TURSO_DATABASE_URL` is set.
+
+
+## Local libSQL / open-source Turso DB
+
+```bash
+VAULT_LAYER_BACKEND=libsql-local vault-layer index /path/to/vault
+```
+
+This uses embedded `libsql::Builder::new_local(...)`, writes `vault-layer.libsql`
+under the external state directory, and requires no `TURSO_DATABASE_URL`,
+`TURSO_AUTH_TOKEN`, SaaS account, or network.

@@ -54,3 +54,10 @@ remote_sync=implemented-explicit
 
 This avoids the dangerous middle state where private vault text is silently sent
 to a remote database just because an environment variable exists.
+
+
+## Local libSQL mode
+
+`VAULT_LAYER_BACKEND=libsql-local` stores the same portable JSON vectors in a
+local embedded libSQL database. It is the open-source local Turso-compatible path
+and requires no URL/token. Hosted Turso can later use native vector columns.

@@ -22,11 +22,13 @@ pub const COMMANDS: &[&str] = &[
     "sync-turso",
 ];
 
-/// Supported storage backends. Local SQLite is the default and is fully implemented.
+/// Supported storage backends. Local SQLite is the compatibility default.
+/// Local libSQL is the local open-source Turso-compatible engine and needs no URL/token.
 /// Turso/libSQL remote is configured explicitly and never guessed from repo state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageBackendKind {
     LocalSqlite,
+    LocalLibsql,
     TursoRemote,
 }
 
@@ -46,24 +48,56 @@ impl StorageBackendConfig {
         }
     }
 
+    pub fn local_libsql() -> Self {
+        Self {
+            kind: StorageBackendKind::LocalLibsql,
+            database_url: None,
+            auth_token_present: false,
+        }
+    }
+
     pub fn from_env() -> Self {
-        match env::var("TURSO_DATABASE_URL")
+        let backend = env::var("VAULT_LAYER_BACKEND")
             .ok()
-            .filter(|value| !value.trim().is_empty())
-        {
-            Some(url) => Self {
-                kind: StorageBackendKind::TursoRemote,
-                database_url: Some(url),
-                auth_token_present: env::var("TURSO_AUTH_TOKEN")
-                    .is_ok_and(|value| !value.trim().is_empty()),
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        match backend.as_str() {
+            "libsql" | "libsql-local" | "turso-local" => Self::local_libsql(),
+            "turso" | "turso-remote" | "libsql-remote" => match env::var("TURSO_DATABASE_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+            {
+                Some(url) => Self {
+                    kind: StorageBackendKind::TursoRemote,
+                    database_url: Some(url),
+                    auth_token_present: env::var("TURSO_AUTH_TOKEN")
+                        .is_ok_and(|value| !value.trim().is_empty()),
+                },
+                None => Self {
+                    kind: StorageBackendKind::TursoRemote,
+                    database_url: None,
+                    auth_token_present: false,
+                },
             },
-            None => Self::local_sqlite(),
+            _ => match env::var("TURSO_DATABASE_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+            {
+                Some(url) => Self {
+                    kind: StorageBackendKind::TursoRemote,
+                    database_url: Some(url),
+                    auth_token_present: env::var("TURSO_AUTH_TOKEN")
+                        .is_ok_and(|value| !value.trim().is_empty()),
+                },
+                None => Self::local_sqlite(),
+            },
         }
     }
 
     pub fn backend_name(&self) -> &'static str {
         match self.kind {
             StorageBackendKind::LocalSqlite => "sqlite",
+            StorageBackendKind::LocalLibsql => "libsql-local",
             StorageBackendKind::TursoRemote => "turso-libsql",
         }
     }
@@ -71,6 +105,7 @@ impl StorageBackendConfig {
     pub fn index_write_mode(&self) -> &'static str {
         match self.kind {
             StorageBackendKind::LocalSqlite => "implemented",
+            StorageBackendKind::LocalLibsql => "implemented-local-open-source-libsql",
             StorageBackendKind::TursoRemote => "implemented-explicit-remote-sync",
         }
     }
@@ -78,6 +113,7 @@ impl StorageBackendConfig {
     pub fn vector_mode(&self) -> &'static str {
         match self.kind {
             StorageBackendKind::LocalSqlite => "portable-json-cosine",
+            StorageBackendKind::LocalLibsql => "portable-json-cosine-on-libsql",
             StorageBackendKind::TursoRemote => "native-libsql-vector-target",
         }
     }
@@ -119,6 +155,10 @@ impl RuntimeConfig {
 
     pub fn database_path(&self, vault_id: &str) -> PathBuf {
         self.state_dir.join(vault_id).join("vault-layer.db")
+    }
+
+    pub fn libsql_database_path(&self, vault_id: &str) -> PathBuf {
+        self.state_dir.join(vault_id).join("vault-layer.libsql")
     }
 }
 
@@ -1029,6 +1069,20 @@ SQLite shadow DB [[Target]] #db",
         assert!(!is_inside(&db_path, &dir));
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&state);
+    }
+
+    #[test]
+    fn local_libsql_needs_no_url_or_token() {
+        let config = StorageBackendConfig::local_libsql();
+        assert_eq!(config.kind, StorageBackendKind::LocalLibsql);
+        assert_eq!(config.backend_name(), "libsql-local");
+        assert_eq!(
+            config.index_write_mode(),
+            "implemented-local-open-source-libsql"
+        );
+        assert_eq!(config.vector_mode(), "portable-json-cosine-on-libsql");
+        assert!(config.database_url.is_none());
+        assert!(!config.auth_token_present);
     }
 
     #[test]

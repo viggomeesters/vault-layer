@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Implement local open-source libSQL/Turso-compatible indexing via `VAULT_LAYER_BACKEND=libsql-local` with no URL/token.
 - Implement explicit Turso/libSQL remote sync via HTTPS pipeline (`sync-turso` and `index --remote-sync`).
 - Add `human_relevance_score` to notes, sections, provenance, and cited retrieval outputs.
 - Add explicit `backend-info` command for SQLite vs Turso/libSQL capability reporting.
