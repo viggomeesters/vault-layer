@@ -18,11 +18,11 @@ vault-layer context "query" --db <db> --json
 `backend-info` reports the active backend and capability mode:
 
 - default: `backend=sqlite`, `index_write_mode=implemented`, `vector_mode=portable-json-cosine`;
-- with `TURSO_DATABASE_URL`: `backend=turso-libsql`, `vector_mode=native-libsql-vector-target`, `remote_sync=false`.
+- with `TURSO_DATABASE_URL`: `backend=turso-libsql`, `vector_mode=native-libsql-vector-target`, `remote_sync=implemented-explicit`.
 
 That split is intentional. Local vault indexing writes a real SQLite shadow DB
-today. Turso/libSQL is a configured target shape for future remote sync; it is
-not used for index writes until a separate explicit sync command exists.
+today. Turso/libSQL remote sync is implemented through the libSQL HTTPS pipeline,
+but it only runs when explicitly invoked with `sync-turso` or `index --remote-sync`.
 
 ## Search result shape
 
@@ -56,3 +56,17 @@ Current defaults:
 - `audience: system` or `system_only: true` => `0.1`;
 - paths under `system/` => `0.25`;
 - otherwise neutral `0.5`.
+
+
+## Turso/libSQL remote sync
+
+```bash
+TURSO_DATABASE_URL=libsql://your-database.turso.io \
+TURSO_AUTH_TOKEN=*** \
+vault-layer sync-turso /path/to/vault --limit 100
+```
+
+`sync-turso` scans the read-only vault, converts the SQLite-compatible schema and
+rows into libSQL `/v2/pipeline` execute requests, and sends them in batches over
+HTTPS. `vault-layer index <vault> --remote-sync` routes to the same implementation
+when `TURSO_DATABASE_URL` is set.

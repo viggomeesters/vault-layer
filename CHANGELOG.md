@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Implement explicit Turso/libSQL remote sync via HTTPS pipeline (`sync-turso` and `index --remote-sync`).
 - Add `human_relevance_score` to notes, sections, provenance, and cited retrieval outputs.
 - Add explicit `backend-info` command for SQLite vs Turso/libSQL capability reporting.
 - Add Turso/libSQL environment contract without enabling accidental remote index writes.

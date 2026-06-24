@@ -38,7 +38,7 @@ Expected local mode:
 backend=sqlite
 index_write_mode=implemented
 vector_mode=portable-json-cosine
-remote_sync=false
+remote_sync=not-configured
 ```
 
 Expected configured Turso/libSQL target mode:
@@ -47,9 +47,9 @@ Expected configured Turso/libSQL target mode:
 backend=turso-libsql
 database_url_configured=true
 auth_token_configured=true
-index_write_mode=configured-not-written-without-explicit-sync
+index_write_mode=implemented-explicit-remote-sync
 vector_mode=native-libsql-vector-target
-remote_sync=false
+remote_sync=implemented-explicit
 ```
 
 This avoids the dangerous middle state where private vault text is silently sent

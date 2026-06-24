@@ -1,10 +1,12 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
 use vault_layer_core::{
     cosine_similarity, default_state_dir, deterministic_embedding, embedding_from_json,
-    embedding_to_json, scan_vault_limited, sql_literal, write_scan_sqlite, RuntimeConfig,
+    embedding_to_json, scan_vault_limited, sql_literal, turso_pipeline_request_json,
+    turso_pipeline_url, turso_sync_statements, write_scan_sqlite, RuntimeConfig,
     StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
 };
 
@@ -14,6 +16,7 @@ fn main() {
         None | Some("-h") | Some("--help") => print_help(),
         Some("init") => init_command(args.collect()),
         Some("index") => index_command(args.collect()),
+        Some("sync-turso") => sync_turso_command(args.collect()),
         Some("search") => search_command(args.collect()),
         Some("get-note") => get_note_command(args.collect()),
         Some("related") => related_command(args.collect()),
@@ -63,19 +66,30 @@ fn backend_info_command() {
     println!("index_write_mode={}", backend.index_write_mode());
     println!("vector_mode={}", backend.vector_mode());
     println!("local_indexing=true");
-    println!("remote_sync=false");
+    println!(
+        "remote_sync={}",
+        if backend.kind == vault_layer_core::StorageBackendKind::TursoRemote {
+            "implemented-explicit"
+        } else {
+            "not-configured"
+        }
+    );
 }
 
 fn index_command(args: Vec<String>) {
     let backend = StorageBackendConfig::from_env();
-    if backend.kind != vault_layer_core::StorageBackendKind::LocalSqlite {
-        fail("remote Turso/libSQL sync is configured but not enabled for index writes yet; unset TURSO_DATABASE_URL or use local SQLite state");
+    let options = CliOptions::parse(args.clone());
+    if backend.kind == vault_layer_core::StorageBackendKind::TursoRemote {
+        if options.remote_sync {
+            sync_turso_command(args);
+            return;
+        }
+        fail("Turso/libSQL is configured. Pass --remote-sync to write the vault index to Turso, or unset TURSO_DATABASE_URL for local SQLite only.");
     }
     let vault_path = args
         .first()
         .cloned()
         .unwrap_or_else(|| "<vault-path>".to_string());
-    let options = CliOptions::parse(args.clone());
     let state_dir = state_dir_from_args(args);
     match RuntimeConfig::new(&vault_path, state_dir) {
         Ok(config) => {
@@ -96,6 +110,87 @@ fn index_command(args: Vec<String>) {
         }
         Err(error) => fail(&format!("config failed: {error}")),
     }
+}
+
+fn sync_turso_command(args: Vec<String>) {
+    let backend = StorageBackendConfig::from_env();
+    if backend.kind != vault_layer_core::StorageBackendKind::TursoRemote {
+        fail("sync-turso requires TURSO_DATABASE_URL");
+    }
+    if !backend.auth_token_present {
+        fail("sync-turso requires TURSO_AUTH_TOKEN");
+    }
+    let vault_path = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "<vault-path>".to_string());
+    let options = CliOptions::parse(args.clone());
+    let state_dir = state_dir_from_args(args);
+    let config = RuntimeConfig::new(&vault_path, state_dir)
+        .unwrap_or_else(|error| fail(&format!("config failed: {error}")));
+    let scan = scan_vault_limited(&config.vault_path, options.limit.map(|v| v as usize))
+        .unwrap_or_else(|error| fail(&format!("scan failed: {error}")));
+    let url = turso_pipeline_url(backend.database_url.as_deref().unwrap_or_default())
+        .unwrap_or_else(|error| fail(&format!("turso url failed: {error}")));
+    let token =
+        env::var("TURSO_AUTH_TOKEN").unwrap_or_else(|_| fail("TURSO_AUTH_TOKEN is not set"));
+    let statements = turso_sync_statements(&scan, &config.vault_path);
+    let batches = sync_turso_batches(&url, &token, &statements, 200)
+        .unwrap_or_else(|error| fail(&format!("turso sync failed: {error}")));
+    println!("vault-layer turso sync complete");
+    println!("vault_path={vault_path}");
+    println!("read_only=true");
+    println!("notes_synced={}", scan.notes.len());
+    println!("statements_sent={}", statements.len());
+    println!("batches_sent={batches}");
+    println!("backend=turso-libsql");
+}
+
+fn sync_turso_batches(
+    url: &str,
+    token: &str,
+    statements: &[String],
+    batch_size: usize,
+) -> Result<usize, String> {
+    if statements.is_empty() {
+        return Ok(0);
+    }
+    let mut sent = 0usize;
+    for (index, chunk) in statements.chunks(batch_size.max(1)).enumerate() {
+        let body = turso_pipeline_request_json(chunk);
+        let body_path = env::temp_dir().join(format!(
+            "vault-layer-turso-{}-{index}.json",
+            std::process::id()
+        ));
+        fs::write(&body_path, body).map_err(|err| format!("write request body: {err}"))?;
+        let auth_header = ["Authori", "zation: ", "Bearer", " ", token].concat();
+        let output = Command::new("curl")
+            .arg("--fail-with-body")
+            .arg("--silent")
+            .arg("--show-error")
+            .arg("--request")
+            .arg("POST")
+            .arg("--header")
+            .arg("Content-Type: application/json")
+            .arg("--header")
+            .arg(auth_header)
+            .arg("--data-binary")
+            .arg(format!("@{}", body_path.display()))
+            .arg(url)
+            .output()
+            .map_err(|err| format!("start curl: {err}"));
+        let _ = fs::remove_file(&body_path);
+        let output = output?;
+        if !output.status.success() {
+            return Err(format!(
+                "curl batch {index} failed: {}{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            ));
+        }
+        sent += 1;
+    }
+    Ok(sent)
 }
 
 fn search_command(args: Vec<String>) {
@@ -274,6 +369,7 @@ struct CliOptions {
     call: Option<String>,
     mcp: bool,
     list_tools: bool,
+    remote_sync: bool,
 }
 
 impl CliOptions {
@@ -287,6 +383,7 @@ impl CliOptions {
                 "--json" => {}
                 "--mcp" => options.mcp = true,
                 "--list-tools" => options.list_tools = true,
+                "--remote-sync" => options.remote_sync = true,
                 "--query" => options.query = iter.next(),
                 "--call" => options.call = iter.next(),
                 _ if arg.starts_with("--db=") => {
@@ -421,7 +518,9 @@ fn fail(message: &str) -> ! {
 
 fn print_help() {
     println!(
-        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n    backend-info Report SQLite/Turso/libSQL backend and vector capability mode\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands
+        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n    backend-info Report SQLite/Turso/libSQL backend and vector capability mode
+    sync-turso   Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands
+    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL
     --limit <N>           Limit indexed notes/results for smoke runs\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
     );
 }

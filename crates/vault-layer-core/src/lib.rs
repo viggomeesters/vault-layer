@@ -19,6 +19,7 @@ pub const COMMANDS: &[&str] = &[
     "context",
     "serve",
     "backend-info",
+    "sync-turso",
 ];
 
 /// Supported storage backends. Local SQLite is the default and is fully implemented.
@@ -70,7 +71,7 @@ impl StorageBackendConfig {
     pub fn index_write_mode(&self) -> &'static str {
         match self.kind {
             StorageBackendKind::LocalSqlite => "implemented",
-            StorageBackendKind::TursoRemote => "configured-not-written-without-explicit-sync",
+            StorageBackendKind::TursoRemote => "implemented-explicit-remote-sync",
         }
     }
 
@@ -640,6 +641,165 @@ fn sql_quote(value: &str) -> String {
     sql_literal(value)
 }
 
+pub fn turso_pipeline_url(database_url: &str) -> Result<String, String> {
+    let trimmed = database_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("TURSO_DATABASE_URL cannot be empty".to_string());
+    }
+    let base = if let Some(rest) = trimmed.strip_prefix("libsql://") {
+        format!("https://{rest}")
+    } else if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        trimmed.to_string()
+    } else {
+        return Err(
+            "TURSO_DATABASE_URL must start with libsql://, https://, or http://".to_string(),
+        );
+    };
+    if base.ends_with("/v2/pipeline") {
+        Ok(base)
+    } else {
+        Ok(format!("{base}/v2/pipeline"))
+    }
+}
+
+pub fn turso_pipeline_request_json(statements: &[String]) -> String {
+    let requests = statements
+        .iter()
+        .map(|sql| {
+            format!(
+                "{{\"type\":\"execute\",\"stmt\":{{\"sql\":{}}}}}",
+                json_string(sql)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{\"requests\":[{requests}]}}")
+}
+
+pub fn turso_sync_statements(scan: &VaultScan, vault_root: &Path) -> Vec<String> {
+    let mut statements = schema_statements();
+    statements.push("BEGIN".to_string());
+    statements.push("DELETE FROM sections_fts".to_string());
+    statements.push("DELETE FROM vaults".to_string());
+    statements.push(format!(
+        "INSERT INTO vaults(id, root_path, indexed_at_unix) VALUES({}, {}, strftime('%s','now'))",
+        sql_quote(&scan.vault_id),
+        sql_quote(&vault_root.to_string_lossy())
+    ));
+    for note in &scan.notes {
+        statements.push(format!(
+            "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3})",
+            sql_quote(&note.id),
+            sql_quote(&scan.vault_id),
+            sql_quote(&note.path),
+            sql_quote(&note.title),
+            note.modified_unix,
+            sql_quote(&note.content_hash),
+            note.human_relevance_score
+        ));
+        for (key, value) in &note.frontmatter {
+            statements.push(format!(
+                "INSERT INTO frontmatter(note_id, key, value) VALUES({}, {}, {})",
+                sql_quote(&note.id),
+                sql_quote(key),
+                sql_quote(value)
+            ));
+        }
+        for tag in &note.tags {
+            statements.push(format!(
+                "INSERT OR IGNORE INTO tags(note_id, tag) VALUES({}, {})",
+                sql_quote(&note.id),
+                sql_quote(tag)
+            ));
+        }
+        for link in &note.links {
+            statements.push(format!(
+                "INSERT INTO links(source_note_id, target, raw) VALUES({}, {}, {})",
+                sql_quote(&note.id),
+                sql_quote(&link.target),
+                sql_quote(&link.raw)
+            ));
+        }
+        for section in &note.sections {
+            statements.push(format!(
+                "INSERT INTO sections(id, note_id, heading_path, level, text, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3})",
+                sql_quote(&section.id),
+                sql_quote(&note.id),
+                sql_quote(&section.heading_path),
+                section.level,
+                sql_quote(&section.text),
+                sql_quote(&section.content_hash),
+                section.human_relevance_score
+            ));
+            statements.push(format!(
+                "INSERT INTO sections_fts(id, note_id, path, heading_path, text) VALUES({}, {}, {}, {}, {})",
+                sql_quote(&section.id),
+                sql_quote(&note.id),
+                sql_quote(&note.path),
+                sql_quote(&section.heading_path),
+                sql_quote(&section.text)
+            ));
+            statements.push(format!(
+                "INSERT INTO provenance(chunk_id, note_path, heading_path, content_hash, modified_unix, human_relevance_score) VALUES({}, {}, {}, {}, {}, {:.3})",
+                sql_quote(&section.id),
+                sql_quote(&note.path),
+                sql_quote(&section.heading_path),
+                sql_quote(&section.content_hash),
+                note.modified_unix,
+                section.human_relevance_score
+            ));
+        }
+    }
+    statements.push(format!(
+        "INSERT INTO index_runs(id, vault_id, started_at_unix, notes_indexed) VALUES({}, {}, strftime('%s','now'), {})",
+        sql_quote(&stable_id("run", &format!("{}:{}", scan.vault_id, scan.notes.len()))),
+        sql_quote(&scan.vault_id),
+        scan.notes.len()
+    ));
+    statements.push("COMMIT".to_string());
+    statements
+}
+
+fn schema_statements() -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    for line in SQLITE_SCHEMA.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("--") {
+            continue;
+        }
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+        if trimmed.ends_with(';') {
+            statements.push(current.trim().trim_end_matches(';').to_string());
+            current.clear();
+        }
+    }
+    if !current.trim().is_empty() {
+        statements.push(current.trim().to_string());
+    }
+    statements
+}
+
+pub fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Deterministic tiny embedding provider for tests and offline smoke runs.
 ///
 /// This is not semantically useful. It proves the provider/storage/query boundary
@@ -872,6 +1032,25 @@ SQLite shadow DB [[Target]] #db",
     }
 
     #[test]
+    fn turso_pipeline_url_maps_libsql_to_http_api() {
+        assert_eq!(
+            turso_pipeline_url("libsql://demo-viggo.turso.io").expect("url"),
+            "https://demo-viggo.turso.io/v2/pipeline"
+        );
+    }
+
+    #[test]
+    fn turso_pipeline_request_contains_executable_sql() {
+        let body = turso_pipeline_request_json(&[
+            "CREATE TABLE demo(id TEXT)".to_string(),
+            "INSERT INTO demo(id) VALUES('a')".to_string(),
+        ]);
+        assert!(body.contains("\"type\":\"execute\""));
+        assert!(body.contains("CREATE TABLE demo"));
+        assert!(body.contains("INSERT INTO demo"));
+    }
+
+    #[test]
     fn local_sqlite_is_default_backend() {
         let config = StorageBackendConfig::local_sqlite();
         assert_eq!(config.backend_name(), "sqlite");
@@ -889,7 +1068,7 @@ SQLite shadow DB [[Target]] #db",
         assert_eq!(config.backend_name(), "turso-libsql");
         assert_eq!(
             config.index_write_mode(),
-            "configured-not-written-without-explicit-sync"
+            "implemented-explicit-remote-sync"
         );
         assert_eq!(config.vector_mode(), "native-libsql-vector-target");
         assert!(LIBSQL_VECTOR_TARGET_SQL.contains("F32_BLOB"));

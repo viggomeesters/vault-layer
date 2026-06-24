@@ -25,4 +25,4 @@
 
 - First-class Hermes/Codex MCP setup docs.
 - Safer writeback design, still disabled by default.
-- Optional remote Turso sync for multi-device shadow indexes.
+- Harden optional remote Turso sync for multi-device shadow indexes with resumable batches and native vector columns.
