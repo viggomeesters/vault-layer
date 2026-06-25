@@ -134,3 +134,8 @@ Read [`CONTRIBUTORS.md`](CONTRIBUTORS.md), [`SUPPORT.md`](SUPPORT.md), [`SECURIT
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+
+## Backend decision
+
+The accepted backend decision is documented in `docs/ADR-0001-primary-retrieval-backend.md`; benchmark evidence lives in `docs/backend-decision-benchmark.md`.

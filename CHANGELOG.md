@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add ADR 0001 documenting SQLite + FTS5 as primary retrieval, DuckDB as analytics sidecar, and Turso/libSQL as explicit remote/cloud sync.
+
 - Restore SQLite + FTS5 as the recommended/default primary retrieval backend (`vault-layer.db`) and use BM25-ranked FTS search for SQLite queries.
 - Reposition DuckDB as an explicit analytics/export sidecar (`VAULT_LAYER_BACKEND=duckdb`).
 - Implement local open-source libSQL/Turso-compatible indexing via `VAULT_LAYER_BACKEND=libsql-local` with no URL/token.
