@@ -9,6 +9,7 @@ use vault_layer_core::{
     sql_literal, turso_pipeline_request_json, turso_pipeline_url, turso_sync_statements,
     write_scan_sqlite, RuntimeConfig, StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
 };
+use vault_layer_sqlite_vec::{refresh_vec_embeddings, search_vec_embeddings};
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -22,6 +23,7 @@ fn main() {
         Some("related") => related_command(args.collect()),
         Some("embed") => embed_command(args.collect()),
         Some("vector-search") => vector_search_command(args.collect()),
+        Some("hybrid-search") => hybrid_search_command(args.collect()),
         Some("context") => context_command(args.collect()),
         Some("serve") => serve_command(args.collect()),
         Some("backend-info") => backend_info_command(),
@@ -372,9 +374,16 @@ fn embed_command(args: Vec<String>) {
     }
     sql.push_str("COMMIT;\n");
     run_sqlite(&db, &sql);
+    let native_vec = refresh_vec_embeddings(&db, "deterministic-v0", 8).ok();
+    let sqlite_vec_rows = native_vec.as_ref().map(|refresh| refresh.rows).unwrap_or(0);
+    let vector_runtime = if native_vec.is_some() {
+        "native-sqlite-vec+json-fallback"
+    } else {
+        "json-cosine-fallback"
+    };
     println!(
-        "{{\"model\":\"deterministic-v0\",\"dimensions\":8,\"chunks_embedded\":{}}}",
-        rows.len()
+        "{{\"model\":\"deterministic-v0\",\"dimensions\":8,\"chunks_embedded\":{},\"sqlite_vec_rows\":{},\"vector_runtime\":\"{}\"}}",
+        rows.len(), sqlite_vec_rows, vector_runtime
     );
 }
 
@@ -384,6 +393,33 @@ fn vector_search_command(args: Vec<String>) {
     let db = require_db(&options);
     let limit = options.limit.unwrap_or(10) as usize;
     let query_embedding = deterministic_embedding(&query, 8);
+
+    if let Ok(hits) =
+        search_vec_embeddings(&db, &query_embedding, limit.saturating_mul(8).max(limit))
+    {
+        if !hits.is_empty() {
+            let mut scored = Vec::new();
+            for hit in hits {
+                let sql = format!(
+                    "SELECT s.id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, s.text FROM sections s JOIN notes n ON n.id = s.note_id WHERE s.id = {} LIMIT 1;",
+                    sql_literal(&hit.chunk_id)
+                );
+                for row in sqlite_table(&db, &sql) {
+                    if row.len() < 8 {
+                        continue;
+                    }
+                    let vector_score = 1.0_f32 / (1.0_f32 + hit.distance as f32);
+                    let text_quality = retrieval_text_quality_score(&row[7]);
+                    let score = vector_score * text_quality;
+                    scored.push((score, vector_score, text_quality, hit.distance, row));
+                }
+            }
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            print_vector_rows(scored.into_iter().take(limit), "native-sqlite-vec");
+            return;
+        }
+    }
+
     let rows = sqlite_table(&db, "SELECT e.chunk_id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json, s.text FROM embeddings e JOIN sections s ON s.id = e.chunk_id JOIN notes n ON n.id = s.note_id WHERE e.model = 'deterministic-v0';");
     let mut scored = rows
         .into_iter()
@@ -395,18 +431,91 @@ fn vector_search_command(args: Vec<String>) {
             let cosine = cosine_similarity(&query_embedding, &embedding);
             let text_quality = retrieval_text_quality_score(&row[8]);
             let score = cosine * text_quality;
-            Some((score, cosine, text_quality, row))
+            Some((score, cosine, text_quality, 0.0_f64, row))
         })
         .collect::<Vec<_>>();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    print_vector_rows(scored.into_iter().take(limit), "json-cosine-fallback");
+}
+
+fn print_vector_rows<I>(rows: I, vector_runtime: &str)
+where
+    I: IntoIterator<Item = (f32, f32, f32, f64, Vec<String>)>,
+{
     let mut out = String::from("[");
-    for (index, (score, cosine, text_quality, row)) in scored.into_iter().take(limit).enumerate() {
+    for (index, (score, vector_score, text_quality, distance, row)) in rows.into_iter().enumerate()
+    {
+        if row.len() < 7 {
+            continue;
+        }
         if index > 0 {
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"chunk_id\":{},\"path\":{},\"heading_path\":{},\"excerpt\":{},\"score\":{:.6},\"cosine_score\":{:.6},\"text_quality_score\":{:.3},\"content_hash\":{},\"modified_unix\":{},\"human_relevance_score\":{}}}",
-            json_string(&row[0]), json_string(&row[1]), json_string(&row[2]), json_string(&row[3]), score, cosine, text_quality, json_string(&row[4]), row[5], row[6]
+            "{{\"chunk_id\":{},\"path\":{},\"heading_path\":{},\"excerpt\":{},\"score\":{:.6},\"vector_score\":{:.6},\"vector_distance\":{:.6},\"text_quality_score\":{:.3},\"vector_runtime\":{},\"content_hash\":{},\"modified_unix\":{},\"human_relevance_score\":{}}}",
+            json_string(&row[0]),
+            json_string(&row[1]),
+            json_string(&row[2]),
+            json_string(&row[3]),
+            score,
+            vector_score,
+            distance,
+            text_quality,
+            json_string(vector_runtime),
+            json_string(&row[4]),
+            row[5],
+            row[6]
+        ));
+    }
+    out.push(']');
+    println!("{out}");
+}
+
+fn hybrid_search_command(args: Vec<String>) {
+    let (query, rest) = split_query(args);
+    let options = CliOptions::parse(rest);
+    let db = require_db(&options);
+    let limit = options.limit.unwrap_or(10) as usize;
+    let candidate_limit = (limit * 12).max(25);
+    let fts = sqlite_fts_query(&query);
+    if fts.is_empty() {
+        println!("[]");
+        return;
+    }
+    let query_embedding = deterministic_embedding(&query, 8);
+    let sql = format!(
+        "SELECT s.id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json, s.text, bm25(sections_fts) * -1.0 AS fts_score FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id LEFT JOIN embeddings e ON e.chunk_id = s.id AND e.model = 'deterministic-v0' WHERE sections_fts MATCH {} ORDER BY fts_score DESC LIMIT {};",
+        sql_literal(&fts), candidate_limit
+    );
+    let mut scored = sqlite_table(&db, &sql)
+        .into_iter()
+        .filter_map(|row| {
+            if row.len() < 10 {
+                return None;
+            }
+            let fts_score = row[9].parse::<f32>().unwrap_or(0.0).max(0.0);
+            let vector_score = if row[7].is_empty() {
+                0.0
+            } else {
+                cosine_similarity(&query_embedding, &embedding_from_json(&row[7]))
+            };
+            let text_quality = retrieval_text_quality_score(&row[8]);
+            let human = row[6].parse::<f32>().unwrap_or(0.5).clamp(0.0, 1.0);
+            let score = (fts_score * 0.65 + vector_score * 0.25 + human * 0.10) * text_quality;
+            Some((score, fts_score, vector_score, text_quality, row))
+        })
+        .collect::<Vec<_>>();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut out = String::from("[");
+    for (index, (score, fts_score, vector_score, text_quality, row)) in
+        scored.into_iter().take(limit).enumerate()
+    {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"chunk_id\":{},\"path\":{},\"heading_path\":{},\"excerpt\":{},\"score\":{:.6},\"fts_score\":{:.6},\"vector_score\":{:.6},\"text_quality_score\":{:.3},\"ranking_runtime\":\"fts-vector-quality\",\"content_hash\":{},\"modified_unix\":{},\"human_relevance_score\":{}}}",
+            json_string(&row[0]), json_string(&row[1]), json_string(&row[2]), json_string(&row[3]), score, fts_score, vector_score, text_quality, json_string(&row[4]), row[5], row[6]
         ));
     }
     out.push(']');
@@ -751,10 +860,6 @@ fn fail(message: &str) -> ! {
 
 fn print_help() {
     println!(
-        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n    backend-info Report SQLite/Turso/libSQL backend and vector capability mode
-    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter
-    sync-turso   Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands
-    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL
-    --limit <N>           Limit indexed notes/results for smoke runs\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
+        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init          Initialize config for an external Markdown/Obsidian vault\n    index         Build or refresh the local shadow index outside the repo\n    search        Search indexed vault chunks and return cited JSON results\n    get-note      Return one bounded note with provenance JSON\n    related       Return WikiLink/backlink related notes as JSON\n    embed         Fill deterministic test embeddings and native sqlite-vec rows\n    vector-search Search embeddings, preferring native sqlite-vec when available\n    hybrid-search FTS candidates reranked with vector, relevance, and quality\n    context       Build an agent-ready cited context pack\n    serve         Serve MCP interfaces over the local shadow DB\n    backend-info  Report SQLite/Turso/libSQL backend and vector capability mode\n    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter\n    sync-turso    Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL\n    --limit <N>           Limit indexed notes/results for smoke runs\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
     );
 }

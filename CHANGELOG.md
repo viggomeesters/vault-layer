@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add native sqlite-vec table search and `hybrid-search` reranking that combines FTS, vector score, human relevance, and text quality while preserving provenance.
+
 - Add retrieval quality first pass for vector fallback: score now includes `text_quality_score` and `cosine_score`, demoting status-only and boilerplate chunks.
 
 - Add test-vault retrieval benchmark evidence before full-vault scale validation.

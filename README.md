@@ -154,3 +154,8 @@ Current bounded real-vault retrieval benchmark evidence lives in `docs/full-vaul
 ## Retrieval quality
 
 Vector fallback results now expose `cosine_score` and `text_quality_score` so low-information chunks can be demoted while native sqlite-vec and real embeddings mature. See `docs/retrieval-quality-first-pass.md`.
+
+
+## Hybrid retrieval
+
+`vault-layer embed` now refreshes native sqlite-vec rows when available, `vector-search` prefers native sqlite-vec KNN, and `hybrid-search` reranks FTS candidates with vector, human relevance, and text-quality signals. The current embedding model remains `deterministic-v0`; real local embeddings are a separate adapter layer. See `docs/sqlite-vec-hybrid-retrieval.md`.

@@ -102,3 +102,9 @@ vault-layer sync-turso /path/to/vault --limit 100
 ```
 
 `sync-turso` scans the read-only vault, converts the SQLite-compatible schema and rows into libSQL `/v2/pipeline` execute requests, and sends them in batches over HTTPS. `vault-layer index <vault> --remote-sync` routes to the same implementation when remote sync is explicitly configured.
+
+## Hybrid search
+
+`hybrid-search` uses SQLite FTS as the candidate generator, then reranks with vector score, `human_relevance_score`, and `text_quality_score`. Rows include `fts_score`, `vector_score`, `text_quality_score`, `ranking_runtime`, and the standard provenance fields.
+
+`vector-search` now prefers native sqlite-vec rows created by `embed`; if the native table is unavailable it falls back to portable JSON cosine scoring.
