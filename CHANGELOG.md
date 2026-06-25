@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `vault-layer-sqlite-vec` native smoke adapter and `vault-layer sqlite-vec-info`; `backend-info` now reports sqlite-vec availability while production vector search remains explicit JSON cosine fallback.
+
 - Add sqlite-vec packaging spike evidence: native sqlite-vec builds on WSL via rusqlite bundled SQLite, but needs a scoped Rust adapter/unsafe boundary instead of the system sqlite3 CLI writer.
 
 - Add ADR 0001 documenting SQLite + FTS5 as primary retrieval, DuckDB as analytics sidecar, and Turso/libSQL as explicit remote/cloud sync.

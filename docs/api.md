@@ -13,6 +13,7 @@ vault-layer related "path/or/id" --db <db> --json
 vault-layer context "query" --db <db> --json
 vault-layer embed --db <db>
 vault-layer vector-search "query" --db <db> --json
+vault-layer sqlite-vec-info
 ```
 
 ## Backend contract
@@ -61,7 +62,7 @@ vault-layer embed --db ~/.local/share/vault-layer/<vault_id>/vault-layer.db
 vault-layer vector-search "query" --db ~/.local/share/vault-layer/<vault_id>/vault-layer.db --json
 ```
 
-The current portable path stores deterministic JSON embeddings and ranks with cosine similarity in the CLI. The native sqlite-vec path is the selected target, but remains behind a packaging gate until it is proven reproducible across WSL/macOS/Windows and the Rust MSRV.
+The current retrieval vector path stores deterministic JSON embeddings and ranks with cosine similarity in the CLI. Native sqlite-vec is now smoke-tested through the scoped `vault-layer-sqlite-vec` adapter and surfaced by `sqlite-vec-info` / `backend-info`, but production `embed` + `vector-search` still use the JSON cosine fallback until sqlite-vec table writes are wired into the indexed vault DB.
 
 ## Human relevance score
 

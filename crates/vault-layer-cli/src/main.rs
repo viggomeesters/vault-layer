@@ -25,6 +25,7 @@ fn main() {
         Some("context") => context_command(args.collect()),
         Some("serve") => serve_command(args.collect()),
         Some("backend-info") => backend_info_command(),
+        Some("sqlite-vec-info") => sqlite_vec_info_command(),
         Some(command) if COMMANDS.contains(&command) => {
             println!("vault-layer {command}: planned MVP subcommand; implementation follows in child tasks");
         }
@@ -56,6 +57,31 @@ fn init_command(args: Vec<String>) {
     println!("backend={}", backend.backend_name());
     println!("index_write_mode={}", backend.index_write_mode());
     println!("vector_mode={}", backend.vector_mode());
+    if backend.kind == vault_layer_core::StorageBackendKind::LocalSqlite {
+        if let Ok(smoke) = vault_layer_sqlite_vec::sqlite_vec_smoke() {
+            println!("sqlite_vec_available=true");
+            println!("sqlite_vec_version={}", smoke.version);
+        } else {
+            println!("sqlite_vec_available=false");
+        }
+    }
+}
+
+fn sqlite_vec_info_command() {
+    match vault_layer_sqlite_vec::sqlite_vec_smoke() {
+        Ok(smoke) => {
+            println!("sqlite_vec_available=true");
+            println!("sqlite_vec_version={}", smoke.version);
+            println!("sqlite_vec_dimensions={}", smoke.dimensions);
+            println!("sqlite_vec_distance={}", smoke.distance);
+            println!("vector_runtime=native-sqlite-vec-smoke");
+        }
+        Err(error) => {
+            println!("sqlite_vec_available=false");
+            println!("sqlite_vec_error={error}");
+            println!("vector_runtime=json-cosine-fallback");
+        }
+    }
 }
 
 fn backend_info_command() {
@@ -65,6 +91,14 @@ fn backend_info_command() {
     println!("auth_token_configured={}", backend.auth_token_present);
     println!("index_write_mode={}", backend.index_write_mode());
     println!("vector_mode={}", backend.vector_mode());
+    if backend.kind == vault_layer_core::StorageBackendKind::LocalSqlite {
+        if let Ok(smoke) = vault_layer_sqlite_vec::sqlite_vec_smoke() {
+            println!("sqlite_vec_available=true");
+            println!("sqlite_vec_version={}", smoke.version);
+        } else {
+            println!("sqlite_vec_available=false");
+        }
+    }
     println!("local_indexing=true");
     println!(
         "remote_sync={}",
@@ -716,6 +750,7 @@ fn fail(message: &str) -> ! {
 fn print_help() {
     println!(
         "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init      Initialize config for an external Markdown/Obsidian vault\n    index     Build or refresh the local shadow index outside the repo\n    search    Search indexed vault chunks and return cited JSON results\n    get-note  Return one bounded note with provenance JSON\n    related   Return WikiLink/backlink related notes as JSON\n    embed     Fill deterministic test embeddings for indexed chunks\n    vector-search Search deterministic embeddings with cited JSON results\n    context   Build an agent-ready cited context pack\n    serve     Serve MCP interfaces over the local shadow DB\n    backend-info Report SQLite/Turso/libSQL backend and vector capability mode
+    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter
     sync-turso   Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands
     --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL
     --limit <N>           Limit indexed notes/results for smoke runs\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."

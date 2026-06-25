@@ -19,6 +19,7 @@ pub const COMMANDS: &[&str] = &[
     "context",
     "serve",
     "backend-info",
+    "sqlite-vec-info",
     "sync-turso",
 ];
 

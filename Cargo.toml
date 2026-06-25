@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/vault-layer-core",
+    "crates/vault-layer-sqlite-vec",
     "crates/vault-layer-cli",
 ]
 resolver = "2"

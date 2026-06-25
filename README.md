@@ -143,4 +143,4 @@ The accepted backend decision is documented in `docs/ADR-0001-primary-retrieval-
 
 ## sqlite-vec status
 
-Native sqlite-vec is feasible but remains gated behind a scoped Rust/rusqlite adapter path; see `docs/sqlite-vec-packaging-spike.md`. Current vector search keeps deterministic JSON cosine as the portable fallback.
+Native sqlite-vec is feasible and now has a scoped Rust/rusqlite smoke adapter exposed via `vault-layer sqlite-vec-info`; see `docs/sqlite-vec-packaging-spike.md`. Current production vector search keeps deterministic JSON cosine as the portable fallback until sqlite-vec tables are wired into the indexed vault DB.
