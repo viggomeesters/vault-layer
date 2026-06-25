@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add test-vault retrieval benchmark evidence before full-vault scale validation.
+
 - Add bounded real-vault retrieval benchmark evidence and document the full-vault WSL progress/resume blocker.
 
 - Add `vault-layer-sqlite-vec` native smoke adapter and `vault-layer sqlite-vec-info`; `backend-info` now reports sqlite-vec availability while production vector search remains explicit JSON cosine fallback.

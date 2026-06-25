@@ -5,17 +5,53 @@ Task: `20260625-112922-full-vault-retrieval-benchmark`
 
 ## Summary
 
-A bounded real-vault retrieval benchmark passed on the current default backend:
+A test-vault benchmark and a bounded real-vault retrieval benchmark passed on the current default backend:
 
 - backend: SQLite + FTS5 default (`vault-layer.db`)
 - native sqlite-vec smoke: available (`v0.1.9`)
 - production vector path: deterministic JSON cosine fallback
-- input vault: `/mnt/c/Users/Viggo/Syncthing/vault`
+- test vault: `/mnt/c/Users/viggo/github/obsidian-test-vault`
+- bounded real input vault: `/mnt/c/Users/Viggo/Syncthing/vault`
 - runtime state: `/tmp/vault-layer-bounded-retrieval-benchmark`
 - generated DB: outside repo and outside vault
 - repo runtime artifacts tracked: `0`
 
 A full-vault run was attempted first and stopped after ~21 minutes with no completed index output. This is recorded as a blocker for unattended full-vault indexing on WSL `/mnt/c`; bounded evidence is valid, but full-vault indexing needs incremental/progress/resume work before being treated as a reliable unattended gate.
+
+
+## Test-vault evidence
+
+After correcting the verification order, a test-vault benchmark was run before any additional full-vault work.
+
+Input:
+
+```text
+/mnt/c/Users/viggo/github/obsidian-test-vault
+markdown_files=19
+```
+
+Observed output:
+
+```text
+started=2026-06-25T14:39:01+02:00
+backend=sqlite
+notes_indexed=13
+db_path=/tmp/vault-layer-test-vault-benchmark/vault_27fc37ef4acdd717/vault-layer.db
+index_elapsed=0:00.49 index_maxrss=6400KB
+db_size_bytes=94208
+notes|sections|fts|embeddings_before|avg_human_relevance = 13|15|15|0|0.5
+sqlite_vec_available=true
+sqlite_vec_version=v0.1.9
+sqlite_vec_dimensions=3
+sqlite_vec_distance=0
+embed_elapsed=0:00.01 embed_maxrss=6400KB
+embeddings_after=15
+vector_elapsed=0:00.00 vector_maxrss=6400KB
+repo_artifacts=0
+finished=2026-06-25T14:39:02+02:00
+```
+
+Search/vector samples retained provenance fields (`chunk_id`, `path`, `heading_path`, `excerpt`, `score`, `content_hash`, `modified_unix`, `human_relevance_score`). Runtime DB was under `/tmp`, outside both repo and vault.
 
 ## Bounded real-vault evidence
 
