@@ -139,3 +139,8 @@ MIT. See [`LICENSE`](LICENSE).
 ## Backend decision
 
 The accepted backend decision is documented in `docs/ADR-0001-primary-retrieval-backend.md`; benchmark evidence lives in `docs/backend-decision-benchmark.md`.
+
+
+## sqlite-vec status
+
+Native sqlite-vec is feasible but remains gated behind a scoped Rust/rusqlite adapter path; see `docs/sqlite-vec-packaging-spike.md`. Current vector search keeps deterministic JSON cosine as the portable fallback.
