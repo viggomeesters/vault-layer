@@ -19,7 +19,7 @@ REQUIRED = [
 ]
 FORBIDDEN_PATH_PATTERNS = [
     r"(^|/)\.go-workflow(/|$)", r"(^|/)tasks\.md$", r"(^|/)\.obsidian(/|$)",
-    r"\.(db|sqlite|sqlite3|libsql|turso|parquet|arrow)$",
+    r"\.(db|sqlite|sqlite3|libsql|duckdb|turso|parquet|arrow)$",
 ]
 FORBIDDEN_TEXT = ["go_workflow", "repo-local go-workflow"]
 
