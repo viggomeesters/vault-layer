@@ -149,3 +149,8 @@ Native sqlite-vec is feasible and now has a scoped Rust/rusqlite smoke adapter e
 ## Retrieval benchmark evidence
 
 Current bounded real-vault retrieval benchmark evidence lives in `docs/full-vault-retrieval-benchmark.md`. The full-vault WSL gate is intentionally not treated as unattended-green until progress/resume hardening exists.
+
+
+## Retrieval quality
+
+Vector fallback results now expose `cosine_score` and `text_quality_score` so low-information chunks can be demoted while native sqlite-vec and real embeddings mature. See `docs/retrieval-quality-first-pass.md`.

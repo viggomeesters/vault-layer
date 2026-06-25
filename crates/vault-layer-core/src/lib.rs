@@ -1043,6 +1043,56 @@ pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
     left.iter().zip(right.iter()).map(|(a, b)| a * b).sum()
 }
 
+pub fn retrieval_text_quality_score(text: &str) -> f32 {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return 0.0;
+    }
+    let word_count = trimmed
+        .split_whitespace()
+        .filter(|part| part.chars().any(|ch| ch.is_alphanumeric()))
+        .count();
+    let char_count = trimmed.chars().filter(|ch| !ch.is_whitespace()).count();
+    let unique_words = {
+        let mut words = trimmed
+            .split_whitespace()
+            .map(|part| {
+                part.trim_matches(|ch: char| !ch.is_alphanumeric())
+                    .to_lowercase()
+            })
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        words.sort();
+        words.dedup();
+        words.len()
+    };
+    let mut score: f32 = 1.0;
+    let lower = trimmed.to_lowercase();
+    let url_count = lower.matches("http://").count() + lower.matches("https://").count();
+    let email_marker_count = lower.matches('@').count();
+    if lower.contains("switch to excalidraw view") || lower.contains("excalidraw view") {
+        score *= 0.10;
+    }
+    if lower.starts_with("**aan:**") || lower.starts_with("aan:") || lower.starts_with("from:") {
+        score *= 0.35;
+    }
+    if url_count >= 1 {
+        score *= 0.55;
+    }
+    if email_marker_count >= 3 {
+        score *= 0.60;
+    }
+    if word_count < 3 || char_count < 20 {
+        score *= 0.15;
+    } else if word_count < 8 || char_count < 60 {
+        score *= 0.45;
+    }
+    if unique_words <= 2 {
+        score *= 0.35;
+    }
+    score.clamp(0.05, 1.0)
+}
+
 fn normalize(vector: &mut [f32]) {
     let magnitude = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
     if magnitude > 0.0 {
@@ -1086,6 +1136,33 @@ mod tests {
         for command in ["init", "index", "search", "context", "serve"] {
             assert!(COMMANDS.contains(&command));
         }
+    }
+
+    #[test]
+    fn retrieval_text_quality_downranks_status_only_chunks() {
+        let status_only = retrieval_text_quality_score("Bezorgd.");
+        let informative = retrieval_text_quality_score(
+            "VaultLayer indexes Markdown sections with provenance, context, and retrieval signals.",
+        );
+        assert!(status_only < 0.2);
+        assert!(informative > 0.9);
+        assert!(informative > status_only * 5.0);
+    }
+
+    #[test]
+    fn retrieval_text_quality_downranks_boilerplate_urls_and_email_headers() {
+        let excalidraw = retrieval_text_quality_score(
+            "==⚠ Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠==",
+        );
+        let bookmark = retrieval_text_quality_score(
+            "- [MB14 vs SARO | Grand Beatbox LOOPSTATION Battle 2017 | SEMI FINAL - YouTube](https://www.youtube.com/watch?v=demo)",
+        );
+        let email_header = retrieval_text_quality_score(
+            "**Aan:** user@example.com, other@example.com, third@example.com\nSubject: hello",
+        );
+        assert!(excalidraw < 0.2);
+        assert!(bookmark < 0.7);
+        assert!(email_header < 0.4);
     }
 
     #[test]

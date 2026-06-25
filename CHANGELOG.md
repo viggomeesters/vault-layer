@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add retrieval quality first pass for vector fallback: score now includes `text_quality_score` and `cosine_score`, demoting status-only and boilerplate chunks.
+
 - Add test-vault retrieval benchmark evidence before full-vault scale validation.
 
 - Add bounded real-vault retrieval benchmark evidence and document the full-vault WSL progress/resume blocker.

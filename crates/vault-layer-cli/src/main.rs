@@ -5,9 +5,9 @@ use std::process::Command;
 
 use vault_layer_core::{
     cosine_similarity, default_state_dir, deterministic_embedding, duckdb_sync_statements,
-    embedding_from_json, embedding_to_json, scan_vault_limited, sql_literal,
-    turso_pipeline_request_json, turso_pipeline_url, turso_sync_statements, write_scan_sqlite,
-    RuntimeConfig, StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
+    embedding_from_json, embedding_to_json, retrieval_text_quality_score, scan_vault_limited,
+    sql_literal, turso_pipeline_request_json, turso_pipeline_url, turso_sync_statements,
+    write_scan_sqlite, RuntimeConfig, StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
 };
 
 fn main() {
@@ -384,27 +384,29 @@ fn vector_search_command(args: Vec<String>) {
     let db = require_db(&options);
     let limit = options.limit.unwrap_or(10) as usize;
     let query_embedding = deterministic_embedding(&query, 8);
-    let rows = sqlite_table(&db, "SELECT e.chunk_id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json FROM embeddings e JOIN sections s ON s.id = e.chunk_id JOIN notes n ON n.id = s.note_id WHERE e.model = 'deterministic-v0';");
+    let rows = sqlite_table(&db, "SELECT e.chunk_id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json, s.text FROM embeddings e JOIN sections s ON s.id = e.chunk_id JOIN notes n ON n.id = s.note_id WHERE e.model = 'deterministic-v0';");
     let mut scored = rows
         .into_iter()
         .filter_map(|row| {
-            if row.len() < 8 {
+            if row.len() < 9 {
                 return None;
             }
             let embedding = embedding_from_json(&row[7]);
-            let score = cosine_similarity(&query_embedding, &embedding);
-            Some((score, row))
+            let cosine = cosine_similarity(&query_embedding, &embedding);
+            let text_quality = retrieval_text_quality_score(&row[8]);
+            let score = cosine * text_quality;
+            Some((score, cosine, text_quality, row))
         })
         .collect::<Vec<_>>();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     let mut out = String::from("[");
-    for (index, (score, row)) in scored.into_iter().take(limit).enumerate() {
+    for (index, (score, cosine, text_quality, row)) in scored.into_iter().take(limit).enumerate() {
         if index > 0 {
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"chunk_id\":{},\"path\":{},\"heading_path\":{},\"excerpt\":{},\"score\":{:.6},\"content_hash\":{},\"modified_unix\":{},\"human_relevance_score\":{}}}",
-            json_string(&row[0]), json_string(&row[1]), json_string(&row[2]), json_string(&row[3]), score, json_string(&row[4]), row[5], row[6]
+            "{{\"chunk_id\":{},\"path\":{},\"heading_path\":{},\"excerpt\":{},\"score\":{:.6},\"cosine_score\":{:.6},\"text_quality_score\":{:.3},\"content_hash\":{},\"modified_unix\":{},\"human_relevance_score\":{}}}",
+            json_string(&row[0]), json_string(&row[1]), json_string(&row[2]), json_string(&row[3]), score, cosine, text_quality, json_string(&row[4]), row[5], row[6]
         ));
     }
     out.push(']');
