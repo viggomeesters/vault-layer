@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add bounded real-vault retrieval benchmark evidence and document the full-vault WSL progress/resume blocker.
+
 - Add `vault-layer-sqlite-vec` native smoke adapter and `vault-layer sqlite-vec-info`; `backend-info` now reports sqlite-vec availability while production vector search remains explicit JSON cosine fallback.
 
 - Add sqlite-vec packaging spike evidence: native sqlite-vec builds on WSL via rusqlite bundled SQLite, but needs a scoped Rust adapter/unsafe boundary instead of the system sqlite3 CLI writer.

@@ -144,3 +144,8 @@ The accepted backend decision is documented in `docs/ADR-0001-primary-retrieval-
 ## sqlite-vec status
 
 Native sqlite-vec is feasible and now has a scoped Rust/rusqlite smoke adapter exposed via `vault-layer sqlite-vec-info`; see `docs/sqlite-vec-packaging-spike.md`. Current production vector search keeps deterministic JSON cosine as the portable fallback until sqlite-vec tables are wired into the indexed vault DB.
+
+
+## Retrieval benchmark evidence
+
+Current bounded real-vault retrieval benchmark evidence lives in `docs/full-vault-retrieval-benchmark.md`. The full-vault WSL gate is intentionally not treated as unattended-green until progress/resume hardening exists.
