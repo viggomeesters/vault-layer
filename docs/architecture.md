@@ -71,9 +71,13 @@ The scanner produces public-safe records rather than storing private fixture con
 
 Stable IDs are derived from vault id, relative path, heading, and content hash so indexes can be rebuilt and stale embeddings detected.
 
-## SQLite/libSQL shadow store
+## SQLite + FTS5 primary retrieval store
 
-The first store writes a real SQLite database through the system `sqlite3` CLI to keep the Rust MVP dependency-light. The schema is embedded from `crates/vault-layer-core/src/schema.sql` and remains libSQL/Turso-compatible where possible. Runtime DB files are written under the resolved state directory, never under the repository and never under the source vault.
+The primary store writes a real SQLite database through the system `sqlite3` CLI. It creates normal relational tables plus `sections_fts` for BM25-ranked full-text search over chunks. The sqlite-vec native vector path is tracked as the intended next local vector implementation; deterministic JSON cosine remains a fallback until sqlite-vec packaging is proven across WSL/macOS/Windows and the Rust MSRV. Runtime DB files are written under the resolved state directory, never under the repository and never under the source vault.
+
+## DuckDB analytics sidecar
+
+DuckDB is an optional sidecar for analytics/export/reporting workloads where columnar scans and Parquet/Arrow compatibility matter more than primary retrieval UX.
 
 ## Viewer adapter
 

@@ -48,11 +48,11 @@ Inspect the configured storage backend:
 ```bash
 cargo run -p vault-layer -- backend-info
 
-# Recommended local DuckDB projection, no credentials/network
+# Recommended local SQLite + FTS5 retrieval projection, no credentials/network
 cargo run -p vault-layer -- index /path/to/vault
 
-# SQLite compatibility fallback
-VAULT_LAYER_BACKEND=sqlite cargo run -p vault-layer -- index /path/to/vault
+# Optional DuckDB analytics/export sidecar
+VAULT_LAYER_BACKEND=duckdb cargo run -p vault-layer -- index /path/to/vault
 
 # Explicit remote sync to hosted Turso/libSQL (requires real credentials)
 TURSO_DATABASE_URL=libsql://your-database.turso.io \
@@ -60,10 +60,7 @@ TURSO_AUTH_TOKEN=*** \
 cargo run -p vault-layer -- sync-turso /path/to/vault --limit 100
 ```
 
-Local SQLite is the implemented default. `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`
-can be configured for the Turso/libSQL target, but remote sync is deliberately
-disabled until an explicit sync task exists; VaultLayer will not upload private
-vault text by accident.
+Local SQLite + FTS5 is the implemented primary retrieval default. `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` can be configured for the Turso/libSQL target, but remote sync only runs through explicit `sync-turso` / `index --remote-sync`; VaultLayer will not upload private vault text by accident.
 
 Search with citations:
 
@@ -89,9 +86,10 @@ VaultLayer treats the source vault as read-only by default.
 - Runtime state belongs outside both the repo and the vault, e.g. `~/.local/share/vault-layer/`.
 - Examples and tests must use synthetic fixtures.
 - Writeback is disabled in the MVP.
-- DuckDB is the recommended/default local projection backend: fast local analytics over `.md` while the vault remains source of truth.
-- SQLite remains a compatibility fallback: set `VAULT_LAYER_BACKEND=sqlite`.
-- Hosted Turso/libSQL is now treated as cloud/sync/export target, not the local core.
+- SQLite + FTS5 is the recommended/default local retrieval backend over `.md` while the vault remains source of truth.
+- sqlite-vec is the intended native local vector path; deterministic JSON cosine remains the fallback until packaging is proven.
+- DuckDB is an optional analytics/export sidecar: set `VAULT_LAYER_BACKEND=duckdb`.
+- Hosted Turso/libSQL is treated as cloud/sync/export target, not the local core.
 
 ## Product split
 

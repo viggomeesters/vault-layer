@@ -22,8 +22,8 @@ pub const COMMANDS: &[&str] = &[
     "sync-turso",
 ];
 
-/// Supported storage backends. Local SQLite is the compatibility default.
-/// Local libSQL is the local open-source Turso-compatible engine and needs no URL/token.
+/// Supported storage backends. Local SQLite + FTS5 is the primary retrieval default.
+/// DuckDB is an explicit analytics/export sidecar. Local libSQL is the local open-source Turso-compatible engine and needs no URL/token.
 /// Turso/libSQL remote is configured explicitly and never guessed from repo state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageBackendKind {
@@ -100,7 +100,7 @@ impl StorageBackendConfig {
                     auth_token_present: env::var("TURSO_AUTH_TOKEN")
                         .is_ok_and(|value| !value.trim().is_empty()),
                 },
-                None => Self::local_duckdb(),
+                None => Self::local_sqlite(),
             },
         }
     }
@@ -116,8 +116,8 @@ impl StorageBackendConfig {
 
     pub fn index_write_mode(&self) -> &'static str {
         match self.kind {
-            StorageBackendKind::LocalDuckdb => "implemented-primary-local-analytics",
-            StorageBackendKind::LocalSqlite => "implemented",
+            StorageBackendKind::LocalDuckdb => "implemented-analytics-sidecar",
+            StorageBackendKind::LocalSqlite => "implemented-primary-local-retrieval",
             StorageBackendKind::LocalLibsql => "implemented-local-open-source-libsql",
             StorageBackendKind::TursoRemote => "implemented-explicit-remote-sync",
         }
@@ -125,8 +125,8 @@ impl StorageBackendConfig {
 
     pub fn vector_mode(&self) -> &'static str {
         match self.kind {
-            StorageBackendKind::LocalDuckdb => "duckdb-native-analytics-portable-json-cosine",
-            StorageBackendKind::LocalSqlite => "portable-json-cosine",
+            StorageBackendKind::LocalDuckdb => "duckdb-analytics-portable-json-cosine",
+            StorageBackendKind::LocalSqlite => "sqlite-vec-target-json-cosine-fallback",
             StorageBackendKind::LocalLibsql => "portable-json-cosine-on-libsql",
             StorageBackendKind::TursoRemote => "native-libsql-vector-target",
         }
@@ -1236,17 +1236,14 @@ SQLite shadow DB [[Target]] #db",
     }
 
     #[test]
-    fn local_duckdb_is_default_backend() {
+    fn local_duckdb_is_analytics_sidecar_backend() {
         let config = StorageBackendConfig::local_duckdb();
         assert_eq!(config.kind, StorageBackendKind::LocalDuckdb);
         assert_eq!(config.backend_name(), "duckdb");
-        assert_eq!(
-            config.index_write_mode(),
-            "implemented-primary-local-analytics"
-        );
+        assert_eq!(config.index_write_mode(), "implemented-analytics-sidecar");
         assert_eq!(
             config.vector_mode(),
-            "duckdb-native-analytics-portable-json-cosine"
+            "duckdb-analytics-portable-json-cosine"
         );
         assert!(config.database_url.is_none());
         assert!(!config.auth_token_present);
@@ -1289,8 +1286,14 @@ SQLite shadow DB [[Target]] #db",
     fn local_sqlite_is_default_backend() {
         let config = StorageBackendConfig::local_sqlite();
         assert_eq!(config.backend_name(), "sqlite");
-        assert_eq!(config.index_write_mode(), "implemented");
-        assert_eq!(config.vector_mode(), "portable-json-cosine");
+        assert_eq!(
+            config.index_write_mode(),
+            "implemented-primary-local-retrieval"
+        );
+        assert_eq!(
+            config.vector_mode(),
+            "sqlite-vec-target-json-cosine-fallback"
+        );
     }
 
     #[test]

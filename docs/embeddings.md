@@ -68,3 +68,8 @@ smoke tests; native DuckDB VSS is the next hardening step.
 `VAULT_LAYER_BACKEND=libsql-local` stores the same portable JSON vectors in a
 local embedded libSQL database. It is the open-source local Turso-compatible path
 and requires no URL/token. Hosted Turso can later use native vector columns.
+
+
+## sqlite-vec target
+
+The selected primary retrieval architecture is SQLite + FTS5 with a sqlite-vec native vector target. Current CLI vector search still uses deterministic JSON cosine as a portable fallback so the public repo remains buildable without platform-specific extension setup. sqlite-vec promotion requires a packaging smoke on WSL/macOS/Windows and Rust 1.75-compatible gates.

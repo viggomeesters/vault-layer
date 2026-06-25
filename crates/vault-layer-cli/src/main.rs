@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use vault_layer_core::{
@@ -273,14 +273,18 @@ fn search_command(args: Vec<String>) {
     let options = CliOptions::parse(rest);
     let db = require_db(&options);
     let limit = options.limit.unwrap_or(10);
-    let like_query = format!("%{}%", query);
-    let sql = format!(
-        "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, CAST(0.0 AS DOUBLE) AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
-         FROM sections s JOIN notes n ON n.id = s.note_id \
-         WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} \
-         ORDER BY s.human_relevance_score DESC, n.modified_unix DESC LIMIT {};",
-        sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), limit
-    );
+    let sql = if is_duckdb_path(&db) {
+        let like_query = format!("%{}%", query);
+        format!(
+            "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, CAST(0.0 AS DOUBLE) AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
+             FROM sections s JOIN notes n ON n.id = s.note_id \
+             WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} \
+             ORDER BY s.human_relevance_score DESC, n.modified_unix DESC LIMIT {};",
+            sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), limit
+        )
+    } else {
+        sqlite_fts_search_sql(&query, limit, 240)
+    };
     print_query_json(&db, &sql);
 }
 
@@ -377,13 +381,17 @@ fn context_command(args: Vec<String>) {
     let (query, rest) = split_query(args);
     let options = CliOptions::parse(rest);
     let db = require_db(&options);
-    let like_query = format!("%{}%", query);
-    let sql = format!(
-        "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 700) AS excerpt, s.content_hash, n.modified_unix, s.human_relevance_score \
-         FROM sections s JOIN notes n ON n.id = s.note_id \
-         WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {};",
-        sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), options.limit.unwrap_or(8)
-    );
+    let sql = if is_duckdb_path(&db) {
+        let like_query = format!("%{}%", query);
+        format!(
+            "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 700) AS excerpt, s.content_hash, n.modified_unix, s.human_relevance_score \
+             FROM sections s JOIN notes n ON n.id = s.note_id \
+             WHERE s.text LIKE {} OR n.path LIKE {} OR s.heading_path LIKE {} LIMIT {};",
+            sql_literal(&like_query), sql_literal(&like_query), sql_literal(&like_query), options.limit.unwrap_or(8)
+        )
+    } else {
+        sqlite_fts_search_sql(&query, options.limit.unwrap_or(8), 700)
+    };
     print_query_json(&db, &sql);
 }
 
@@ -482,8 +490,36 @@ fn require_db(options: &CliOptions) -> PathBuf {
     })
 }
 
+fn is_duckdb_path(db: &Path) -> bool {
+    db.extension().and_then(|value| value.to_str()) == Some("duckdb")
+}
+
+fn sqlite_fts_search_sql(query: &str, limit: u32, excerpt_len: usize) -> String {
+    let fts = sqlite_fts_query(query);
+    if fts.is_empty() {
+        return "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, 240) AS excerpt, CAST(0.0 AS DOUBLE) AS score, s.content_hash, n.modified_unix, s.human_relevance_score FROM sections s JOIN notes n ON n.id = s.note_id WHERE 0 LIMIT 0;".to_string();
+    }
+    format!(
+        "SELECT s.id AS chunk_id, n.path, s.heading_path, substr(s.text, 1, {excerpt_len}) AS excerpt, bm25(sections_fts) * -1.0 AS score, s.content_hash, n.modified_unix, s.human_relevance_score \
+         FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id \
+         WHERE sections_fts MATCH {} \
+         ORDER BY score DESC, s.human_relevance_score DESC, n.modified_unix DESC LIMIT {limit};",
+        sql_literal(&fts)
+    )
+}
+
+fn sqlite_fts_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|part| part.trim_matches(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-'))
+        .filter(|part| !part.is_empty())
+        .map(|part| format!("\"{}\"", part.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
 fn print_query_json(db: &PathBuf, sql: &str) {
-    if db.extension().and_then(|value| value.to_str()) == Some("duckdb") {
+    if is_duckdb_path(db) {
         print_duckdb_json(db, sql);
     } else {
         print_sqlite_json(db, sql);
