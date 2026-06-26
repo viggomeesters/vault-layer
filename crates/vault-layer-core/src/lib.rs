@@ -1319,6 +1319,46 @@ SQLite shadow DB [[Target]] #db",
     }
 
     #[test]
+    fn sqlite_embeddings_keep_distinct_rows_per_model() {
+        let dir = env::temp_dir().join(format!(
+            "vault-layer-model-rows-vault-{}",
+            stable_hash("model-rows-vault")
+        ));
+        let state = env::temp_dir().join(format!(
+            "vault-layer-model-rows-state-{}",
+            stable_hash("model-rows-state")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&state);
+        fs::create_dir_all(&dir).expect("create vault dir");
+        fs::write(dir.join("note.md"), "# Hello\nEmbedding model rows").expect("write note");
+        let scan = scan_vault(&dir).expect("scan");
+        let chunk_id = scan.notes[0].sections[0].id.clone();
+        let db_path = state.join("demo/vault-layer.db");
+        write_scan_sqlite(&scan, &dir, &db_path).expect("write sqlite");
+
+        let sql = format!(
+            "INSERT INTO embeddings(chunk_id, model, dimensions, embedding_json, embedded_at_unix) VALUES('{chunk_id}', 'deterministic-v0', 8, '[1,0,0,0,0,0,0,0]', 0);\n\
+             INSERT INTO embeddings(chunk_id, model, dimensions, embedding_json, embedded_at_unix) VALUES('{chunk_id}', 'fastembed:sentence-transformers/all-MiniLM-L6-v2', 384, '[0.1,0.2]', 0);\n\
+             SELECT count(*) FROM embeddings WHERE chunk_id = '{chunk_id}';"
+        );
+        let output = std::process::Command::new("sqlite3")
+            .arg(&db_path)
+            .arg(sql)
+            .output()
+            .expect("run sqlite query");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "2");
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&state);
+    }
+
+    #[test]
     fn local_duckdb_is_analytics_sidecar_backend() {
         let config = StorageBackendConfig::local_duckdb();
         assert_eq!(config.kind, StorageBackendKind::LocalDuckdb);

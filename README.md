@@ -109,6 +109,7 @@ See [`docs/viewer-adapter.md`](docs/viewer-adapter.md).
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - [`docs/REPO_COMPLETE.md`](docs/REPO_COMPLETE.md)
 - [`docs/FILL_LOOP.md`](docs/FILL_LOOP.md)
+- [`docs/local-embedding-adapter-blocker.md`](docs/local-embedding-adapter-blocker.md)
 
 ## Verify
 

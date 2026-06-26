@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record the real local embedding adapter blocker for `fastembed`/local ONNX under Rust/Cargo 1.75 and harden `embeddings` to keep `(chunk_id, model)` rows with explicit dimensions for deterministic-v0 vs future real model comparison.
+
 - Add native sqlite-vec table search and `hybrid-search` reranking that combines FTS, vector score, human relevance, and text quality while preserving provenance.
 
 - Add retrieval quality first pass for vector fallback: score now includes `text_quality_score` and `cosine_score`, demoting status-only and boilerplate chunks.

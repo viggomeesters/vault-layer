@@ -35,6 +35,8 @@ Hybrid retrieval combines:
 5. sqlite-vec native vector search when packaging is proven, with deterministic JSON cosine fallback;
 6. reranking and citation packing.
 
+Embedding rows are keyed by `(chunk_id, model)` and record dimensions per model, so future local semantic embeddings can be compared against `deterministic-v0` without overwriting smoke vectors.
+
 ## Backend split
 
 VaultLayer is not identified with one storage vendor. Backends are adapters over the same Markdown source and provenance contract:

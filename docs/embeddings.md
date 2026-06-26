@@ -11,6 +11,14 @@ vault-layer embed --db <db>
 vault-layer vector-search "query" --db <db> --json
 ```
 
+The `embeddings` table is keyed by `(chunk_id, model)` and records `model` plus `dimensions` per row, so deterministic smoke vectors can coexist with future real local model vectors for the same chunk.
+
+## Real local model blocker
+
+A real local embedding adapter is still blocked on the current Rust/Cargo 1.75.0 toolchain. The measured candidate is `fastembed` with `sentence-transformers/all-MiniLM-L6-v2` local ONNX inference, no SaaS token, and expected 384-dimensional vectors. Current `fastembed` dependency graphs pull crates that require the unstable `edition2024` manifest feature under Cargo 1.75.0.
+
+See [`local-embedding-adapter-blocker.md`](local-embedding-adapter-blocker.md) for the exact command evidence and the required follow-up before semantic retrieval quality can be claimed.
+
 ## libSQL/Turso target shape
 
 The public schema currently stores deterministic vectors as JSON for portable SQLite tests. The intended libSQL/Turso shape is:
