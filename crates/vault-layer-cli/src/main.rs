@@ -360,21 +360,37 @@ fn embed_command(args: Vec<String>) {
         &db,
         "SELECT id, replace(replace(text, char(10), ' '), char(9), ' ') FROM sections ORDER BY id;",
     );
-    let mut sql = String::from("PRAGMA foreign_keys = ON;\nBEGIN; DELETE FROM embeddings WHERE model = 'deterministic-v0';\n");
-    for row in &rows {
+    let texts = rows
+        .iter()
+        .filter_map(|row| row.get(1).cloned())
+        .collect::<Vec<_>>();
+    let provider = EmbeddingProvider::from_model_option(options.embedding_model.as_deref())
+        .unwrap_or_else(|error| fail(&error));
+    let batch = provider
+        .embed_batch(&texts, EmbeddingKind::Passage)
+        .unwrap_or_else(|error| fail(&format!("embedding failed: {error}")));
+    if batch.embeddings.len() != rows.len() {
+        fail("embedding provider returned mismatched row count");
+    }
+    let mut sql = format!(
+        "PRAGMA foreign_keys = ON;\nBEGIN; DELETE FROM embeddings WHERE model = {};\n",
+        sql_literal(&batch.model)
+    );
+    for (row, embedding_json) in rows.iter().zip(batch.embeddings.iter()) {
         if row.len() < 2 {
             continue;
         }
-        let embedding = embedding_to_json(&deterministic_embedding(&row[1], 8));
         sql.push_str(&format!(
-            "INSERT OR REPLACE INTO embeddings(chunk_id, model, dimensions, embedding_json, embedded_at_unix) VALUES({}, 'deterministic-v0', 8, {}, strftime('%s','now'));\n",
+            "INSERT OR REPLACE INTO embeddings(chunk_id, model, dimensions, embedding_json, embedded_at_unix) VALUES({}, {}, {}, {}, strftime('%s','now'));\n",
             sql_literal(&row[0]),
-            sql_literal(&embedding)
+            sql_literal(&batch.model),
+            batch.dimensions,
+            sql_literal(embedding_json)
         ));
     }
     sql.push_str("COMMIT;\n");
     run_sqlite(&db, &sql);
-    let native_vec = refresh_vec_embeddings(&db, "deterministic-v0", 8).ok();
+    let native_vec = refresh_vec_embeddings(&db, &batch.model, batch.dimensions).ok();
     let sqlite_vec_rows = native_vec.as_ref().map(|refresh| refresh.rows).unwrap_or(0);
     let vector_runtime = if native_vec.is_some() {
         "native-sqlite-vec+json-fallback"
@@ -382,8 +398,16 @@ fn embed_command(args: Vec<String>) {
         "json-cosine-fallback"
     };
     println!(
-        "{{\"model\":\"deterministic-v0\",\"dimensions\":8,\"chunks_embedded\":{},\"sqlite_vec_rows\":{},\"vector_runtime\":\"{}\"}}",
-        rows.len(), sqlite_vec_rows, vector_runtime
+        "{{\"model\":{},\"dimensions\":{},\"chunks_embedded\":{},\"sqlite_vec_rows\":{},\"vector_runtime\":\"{}\",\"cache_dir\":{}}}",
+        json_string(&batch.model),
+        batch.dimensions,
+        rows.len(),
+        sqlite_vec_rows,
+        vector_runtime,
+        batch.cache_dir
+            .as_deref()
+            .map(json_string)
+            .unwrap_or_else(|| "null".to_string())
     );
 }
 
@@ -392,7 +416,16 @@ fn vector_search_command(args: Vec<String>) {
     let options = CliOptions::parse(rest);
     let db = require_db(&options);
     let limit = options.limit.unwrap_or(10) as usize;
-    let query_embedding = deterministic_embedding(&query, 8);
+    let provider = EmbeddingProvider::from_model_option(options.embedding_model.as_deref())
+        .unwrap_or_else(|error| fail(&error));
+    let query_batch = provider
+        .embed_batch(&[query.clone()], EmbeddingKind::Query)
+        .unwrap_or_else(|error| fail(&format!("query embedding failed: {error}")));
+    let query_embedding = query_batch
+        .embeddings
+        .first()
+        .map(|embedding| embedding_from_json(embedding))
+        .unwrap_or_default();
 
     if let Ok(hits) =
         search_vec_embeddings(&db, &query_embedding, limit.saturating_mul(8).max(limit))
@@ -420,7 +453,7 @@ fn vector_search_command(args: Vec<String>) {
         }
     }
 
-    let rows = sqlite_table(&db, "SELECT e.chunk_id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json, s.text FROM embeddings e JOIN sections s ON s.id = e.chunk_id JOIN notes n ON n.id = s.note_id WHERE e.model = 'deterministic-v0';");
+    let rows = sqlite_table(&db, &format!("SELECT e.chunk_id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json, s.text FROM embeddings e JOIN sections s ON s.id = e.chunk_id JOIN notes n ON n.id = s.note_id WHERE e.model = {};", sql_literal(provider.model_name())));
     let mut scored = rows
         .into_iter()
         .filter_map(|row| {
@@ -477,15 +510,24 @@ fn hybrid_search_command(args: Vec<String>) {
     let db = require_db(&options);
     let limit = options.limit.unwrap_or(10) as usize;
     let candidate_limit = (limit * 12).max(25);
+    let provider = EmbeddingProvider::from_model_option(options.embedding_model.as_deref())
+        .unwrap_or_else(|error| fail(&error));
     let fts = sqlite_fts_query(&query);
     if fts.is_empty() {
         println!("[]");
         return;
     }
-    let query_embedding = deterministic_embedding(&query, 8);
+    let query_batch = provider
+        .embed_batch(&[query.clone()], EmbeddingKind::Query)
+        .unwrap_or_else(|error| fail(&format!("query embedding failed: {error}")));
+    let query_embedding = query_batch
+        .embeddings
+        .first()
+        .map(|embedding| embedding_from_json(embedding))
+        .unwrap_or_default();
     let sql = format!(
-        "SELECT s.id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json, s.text, bm25(sections_fts) * -1.0 AS fts_score FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id LEFT JOIN embeddings e ON e.chunk_id = s.id AND e.model = 'deterministic-v0' WHERE sections_fts MATCH {} ORDER BY fts_score DESC LIMIT {};",
-        sql_literal(&fts), candidate_limit
+        "SELECT s.id, n.path, s.heading_path, substr(s.text, 1, 240), s.content_hash, n.modified_unix, s.human_relevance_score, e.embedding_json, s.text, bm25(sections_fts) * -1.0 AS fts_score FROM sections_fts JOIN sections s ON s.id = sections_fts.id JOIN notes n ON n.id = s.note_id LEFT JOIN embeddings e ON e.chunk_id = s.id AND e.model = {} WHERE sections_fts MATCH {} ORDER BY fts_score DESC LIMIT {};",
+        sql_literal(provider.model_name()), sql_literal(&fts), candidate_limit
     );
     let mut scored = sqlite_table(&db, &sql)
         .into_iter()
@@ -579,6 +621,143 @@ fn serve_command(args: Vec<String>) {
     }
 }
 
+enum EmbeddingKind {
+    Passage,
+    Query,
+}
+
+struct EmbeddingBatch {
+    model: String,
+    dimensions: usize,
+    cache_dir: Option<String>,
+    embeddings: Vec<String>,
+}
+
+enum EmbeddingProvider {
+    Deterministic,
+    FastEmbedMiniLm,
+}
+
+impl EmbeddingProvider {
+    fn from_model_option(value: Option<&str>) -> Result<Self, String> {
+        match value
+            .unwrap_or("deterministic-v0")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "" | "deterministic" | "deterministic-v0" => Ok(Self::Deterministic),
+            "fastembed" | "fastembed-mini-lm" | "all-minilm-l6-v2" => Ok(Self::FastEmbedMiniLm),
+            other => Err(format!(
+                "unknown embedding model '{other}'; supported: deterministic-v0, fastembed-mini-lm"
+            )),
+        }
+    }
+
+    fn model_name(&self) -> &'static str {
+        match self {
+            Self::Deterministic => "deterministic-v0",
+            Self::FastEmbedMiniLm => "fastembed:sentence-transformers/all-MiniLM-L6-v2",
+        }
+    }
+
+    fn embed_batch(&self, texts: &[String], kind: EmbeddingKind) -> Result<EmbeddingBatch, String> {
+        match self {
+            Self::Deterministic => Ok(EmbeddingBatch {
+                model: self.model_name().to_string(),
+                dimensions: 8,
+                cache_dir: None,
+                embeddings: texts
+                    .iter()
+                    .map(|text| embedding_to_json(&deterministic_embedding(text, 8)))
+                    .collect(),
+            }),
+            Self::FastEmbedMiniLm => run_fastembed_helper(texts, kind),
+        }
+    }
+}
+
+fn run_fastembed_helper(texts: &[String], kind: EmbeddingKind) -> Result<EmbeddingBatch, String> {
+    let cache_dir = match env::var_os("VAULT_LAYER_FASTEMBED_CACHE_DIR") {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => default_state_dir()?.join("models/fastembed"),
+    };
+    fs::create_dir_all(&cache_dir).map_err(|error| {
+        format!(
+            "create fastembed cache dir {}: {error}",
+            cache_dir.display()
+        )
+    })?;
+
+    let input_path = env::temp_dir().join(format!(
+        "vault-layer-fastembed-{}-{}.json",
+        std::process::id(),
+        texts.len()
+    ));
+    let mut input = format!(
+        "{{\"kind\":{},\"cache_dir\":{},\"texts\":[",
+        json_string(match kind {
+            EmbeddingKind::Passage => "passage",
+            EmbeddingKind::Query => "query",
+        }),
+        json_string(&cache_dir.display().to_string())
+    );
+    for (index, text) in texts.iter().enumerate() {
+        if index > 0 {
+            input.push(',');
+        }
+        input.push_str(&json_string(text));
+    }
+    input.push_str("]}");
+    fs::write(&input_path, input).map_err(|error| format!("write fastembed input: {error}"))?;
+
+    let python = env::var("VAULT_LAYER_FASTEMBED_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let output = Command::new(python)
+        .arg("scripts/fastembed_embed.py")
+        .arg(&input_path)
+        .output()
+        .map_err(|error| format!("start fastembed helper: {error}"));
+    let _ = fs::remove_file(&input_path);
+    let output = output?;
+    if !output.status.success() {
+        return Err(format!(
+            "fastembed helper failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let metadata = lines
+        .next()
+        .ok_or_else(|| "fastembed helper returned no metadata".to_string())?;
+    if !metadata.contains("fastembed:sentence-transformers/all-MiniLM-L6-v2") {
+        return Err(format!("unexpected fastembed metadata: {metadata}"));
+    }
+    let embeddings = lines.map(ToString::to_string).collect::<Vec<_>>();
+    if embeddings.len() != texts.len() {
+        return Err(format!(
+            "fastembed helper returned {} vectors for {} texts",
+            embeddings.len(),
+            texts.len()
+        ));
+    }
+    let dimensions = embeddings
+        .first()
+        .map(|embedding| embedding_from_json(embedding).len())
+        .unwrap_or(0);
+    if dimensions != 384 {
+        return Err(format!("unexpected fastembed dimensions: {dimensions}"));
+    }
+    Ok(EmbeddingBatch {
+        model: "fastembed:sentence-transformers/all-MiniLM-L6-v2".to_string(),
+        dimensions,
+        cache_dir: Some(cache_dir.display().to_string()),
+        embeddings,
+    })
+}
+
 #[derive(Default)]
 struct CliOptions {
     db: Option<PathBuf>,
@@ -588,6 +767,7 @@ struct CliOptions {
     mcp: bool,
     list_tools: bool,
     remote_sync: bool,
+    embedding_model: Option<String>,
 }
 
 impl CliOptions {
@@ -604,6 +784,7 @@ impl CliOptions {
                 "--remote-sync" => options.remote_sync = true,
                 "--query" => options.query = iter.next(),
                 "--call" => options.call = iter.next(),
+                "--model" => options.embedding_model = iter.next(),
                 _ if arg.starts_with("--db=") => {
                     options.db = Some(PathBuf::from(arg.trim_start_matches("--db=")))
                 }
@@ -615,6 +796,9 @@ impl CliOptions {
                 }
                 _ if arg.starts_with("--call=") => {
                     options.call = Some(arg.trim_start_matches("--call=").to_string())
+                }
+                _ if arg.starts_with("--model=") => {
+                    options.embedding_model = Some(arg.trim_start_matches("--model=").to_string())
                 }
                 _ => {}
             }
@@ -860,6 +1044,6 @@ fn fail(message: &str) -> ! {
 
 fn print_help() {
     println!(
-        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init          Initialize config for an external Markdown/Obsidian vault\n    index         Build or refresh the local shadow index outside the repo\n    search        Search indexed vault chunks and return cited JSON results\n    get-note      Return one bounded note with provenance JSON\n    related       Return WikiLink/backlink related notes as JSON\n    embed         Fill deterministic test embeddings and native sqlite-vec rows\n    vector-search Search embeddings, preferring native sqlite-vec when available\n    hybrid-search FTS candidates reranked with vector, relevance, and quality\n    context       Build an agent-ready cited context pack\n    serve         Serve MCP interfaces over the local shadow DB\n    backend-info  Report SQLite/Turso/libSQL backend and vector capability mode\n    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter\n    sync-turso    Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL\n    --limit <N>           Limit indexed notes/results for smoke runs\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
+        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init          Initialize config for an external Markdown/Obsidian vault\n    index         Build or refresh the local shadow index outside the repo\n    search        Search indexed vault chunks and return cited JSON results\n    get-note      Return one bounded note with provenance JSON\n    related       Return WikiLink/backlink related notes as JSON\n    embed         Fill selected embedding model rows and native sqlite-vec rows\n    vector-search Search embeddings, preferring native sqlite-vec when available\n    hybrid-search FTS candidates reranked with vector, relevance, and quality\n    context       Build an agent-ready cited context pack\n    serve         Serve MCP interfaces over the local shadow DB\n    backend-info  Report SQLite/Turso/libSQL backend and vector capability mode\n    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter\n    sync-turso    Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL\n    --limit <N>           Limit indexed notes/results for smoke runs\n    --model <NAME>        Embedding model: deterministic-v0 or fastembed-mini-lm\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
     );
 }

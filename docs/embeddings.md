@@ -13,11 +13,22 @@ vault-layer vector-search "query" --db <db> --json
 
 The `embeddings` table is keyed by `(chunk_id, model)` and records `model` plus `dimensions` per row, so deterministic smoke vectors can coexist with future real local model vectors for the same chunk.
 
-## Real local model blocker
+## Real local model provider
 
-A real local embedding adapter is still blocked on the current Rust/Cargo 1.75.0 toolchain. The measured candidate is `fastembed` with `sentence-transformers/all-MiniLM-L6-v2` local ONNX inference, no SaaS token, and expected 384-dimensional vectors. Current `fastembed` dependency graphs pull crates that require the unstable `edition2024` manifest feature under Cargo 1.75.0.
+`fastembed-mini-lm` is the first real local model adapter. It uses Python `fastembed` + ONNX Runtime through `scripts/fastembed_embed.py`, keeping Rust dependency resolution compatible with the current Cargo 1.75 toolchain.
 
-See [`local-embedding-adapter-blocker.md`](local-embedding-adapter-blocker.md) for the exact command evidence and the required follow-up before semantic retrieval quality can be claimed.
+```bash
+python3 -m pip install fastembed==0.7.3
+vault-layer embed --db <db> --model fastembed-mini-lm
+vault-layer vector-search "query" --db <db> --model fastembed-mini-lm --json
+vault-layer hybrid-search "query" --db <db> --model fastembed-mini-lm --json
+```
+
+Model identity: `fastembed:sentence-transformers/all-MiniLM-L6-v2`
+Dimensions: `384`
+Default cache: `~/.local/share/vault-layer/models/fastembed/`
+
+No SaaS URL/token is required. First use may download the ONNX model into the cache; cached runs are local/offline. See [`local-embedding-adapter.md`](local-embedding-adapter.md) for test-vault and bounded 5000-note evidence.
 
 ## libSQL/Turso target shape
 
@@ -80,4 +91,4 @@ and requires no URL/token. Hosted Turso can later use native vector columns.
 
 ## sqlite-vec target
 
-The selected primary retrieval architecture is SQLite + FTS5 with a sqlite-vec native vector target. `vault-layer sqlite-vec-info` now smoke-tests native sqlite-vec through a scoped Rust/rusqlite adapter and reports `sqlite_vec_available=true` when the extension registers successfully. Current production `embed` and `vector-search` still use deterministic JSON cosine as a portable fallback until sqlite-vec table writes/search are wired into the indexed vault DB. sqlite-vec promotion beyond smoke requires WSL/macOS/Windows gates and Rust MSRV compatibility.
+The selected primary retrieval architecture is SQLite + FTS5 with a sqlite-vec native vector target. `vault-layer sqlite-vec-info` smoke-tests native sqlite-vec through a scoped Rust/rusqlite adapter and reports `sqlite_vec_available=true` when the extension registers successfully. `vault-layer embed` can now populate either deterministic smoke vectors or real local `fastembed-mini-lm` vectors, and sqlite-vec table writes/search are refreshed for the selected model.

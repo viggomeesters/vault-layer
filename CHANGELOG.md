@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Record the real local embedding adapter blocker for `fastembed`/local ONNX under Rust/Cargo 1.75 and harden `embeddings` to keep `(chunk_id, model)` rows with explicit dimensions for deterministic-v0 vs future real model comparison.
+- Add `--model fastembed-mini-lm` for real local Python FastEmbed/ONNX embeddings across `embed`, `vector-search`, and `hybrid-search`, with model cache outside repo/vault and 5000-note deterministic-vs-real evidence.
+
+- Record the Rust-crate local embedding adapter blocker for `fastembed`/local ONNX under Cargo 1.75 and harden `embeddings` to keep `(chunk_id, model)` rows with explicit dimensions for deterministic-v0 vs real model comparison.
 
 - Add native sqlite-vec table search and `hybrid-search` reranking that combines FTS, vector score, human relevance, and text quality while preserving provenance.
 

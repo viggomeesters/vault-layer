@@ -70,6 +70,18 @@ vault-layer get-note "Projects/example.md" --db <db> --json
 vault-layer related "Projects/example.md" --db <db> --json
 ```
 
+Generate local embeddings and run vector retrieval:
+
+```bash
+# deterministic smoke/test provider
+vault-layer embed --db <db> --model deterministic-v0
+
+# real local ONNX model via Python fastembed; cache stays outside repo/vault
+python3 -m pip install fastembed==0.7.3
+vault-layer embed --db <db> --model fastembed-mini-lm
+vault-layer vector-search "agent context" --db <db> --model fastembed-mini-lm --json
+```
+
 MCP smoke interface:
 
 ```bash
@@ -109,6 +121,7 @@ See [`docs/viewer-adapter.md`](docs/viewer-adapter.md).
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - [`docs/REPO_COMPLETE.md`](docs/REPO_COMPLETE.md)
 - [`docs/FILL_LOOP.md`](docs/FILL_LOOP.md)
+- [`docs/local-embedding-adapter.md`](docs/local-embedding-adapter.md)
 - [`docs/local-embedding-adapter-blocker.md`](docs/local-embedding-adapter-blocker.md)
 
 ## Verify

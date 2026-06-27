@@ -1,9 +1,13 @@
-# Local embedding adapter blocker
+# Local embedding adapter blocker history
 
 Date: 2026-06-26  
 Task: `20260625-204500-vault-layer-real-local-embedding-adapter`
 
-## Decision
+## Resolution
+
+The original Rust-crate path remains blocked under Cargo 1.75, but the follow-up task implemented a compatible local adapter through Python `fastembed` + ONNX Runtime. See [`local-embedding-adapter.md`](local-embedding-adapter.md) for the current working path and 5000-note evidence.
+
+## Original decision
 
 VaultLayer should use a real local/open-source embedding backend before claiming semantic retrieval quality. The first candidate is `fastembed` with `sentence-transformers/all-MiniLM-L6-v2` because it runs local ONNX inference, needs no SaaS API token, and produces 384-dimensional retrieval embeddings.
 
