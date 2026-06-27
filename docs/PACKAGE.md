@@ -29,6 +29,14 @@ Build a local pilot artifact:
 scripts/package_pilot.sh
 ```
 
+Verify the package from a cloned repo:
+
+```bash
+scripts/package_smoke.sh /path/to/synthetic-or-test-vault
+```
+
+This builds the package, verifies the tarball checksum, unpacks it outside the repository, runs `bin/vault-layer --help`, runs `doctor` with `VAULT_LAYER_FASTEMBED_HELPER` pointing at the unpacked helper, and fails if DBs/caches/raw benchmark artifacts are bundled.
+
 Default outputs:
 
 ```text

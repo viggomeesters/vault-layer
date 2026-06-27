@@ -53,7 +53,7 @@ mkdir -p "$out_dir/bin" "$out_dir/scripts" "$out_dir/docs"
 cp target/release/vault-layer "$out_dir/bin/vault-layer"
 cp scripts/fastembed_embed.py scripts/pilot_doctor.sh scripts/benchmark_vault.sh "$out_dir/scripts/"
 cp README.md LICENSE CHANGELOG.md "$out_dir/"
-cp docs/PACKAGE.md docs/niels-pilot-install.md docs/niels-pilot-benchmark.md docs/local-embedding-adapter.md docs/full-vault-progress-resume.md "$out_dir/docs/"
+cp docs/PACKAGE.md docs/claim-evidence-gate.md docs/niels-pilot-install.md docs/niels-pilot-benchmark.md docs/local-embedding-adapter.md docs/full-vault-progress-resume.md "$out_dir/docs/"
 
 cat >"$out_dir/README-PILOT.md" <<'README'
 # VaultLayer pilot package

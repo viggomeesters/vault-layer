@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `scripts/package_smoke.sh` and include the claim gate in the pilot package so the tarball is verified from outside the repo with explicit FastEmbed helper paths and no bundled runtime/private artifacts.
 - Add `docs/claim-evidence-gate.md` to make self-contained/performance-win language falsifiable and disallow unscoped guarantees until target-vault evidence passes.
 - Align public product claims around “pilot-ready local MVP, not fully self-contained production product” and add `docs/niels-pilot-runbook.md` with safe install, benchmark, success metrics, cleanup, and stop criteria.
 - Add `scripts/package_pilot.sh` and expand `docs/PACKAGE.md` for a local pilot artifact with release binary, helper scripts, docs, SHA256, FastEmbed runtime expectations, and cleanup commands.
