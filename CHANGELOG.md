@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Align public product claims around “pilot-ready local MVP, not fully self-contained production product” and add `docs/niels-pilot-runbook.md` with safe install, benchmark, success metrics, cleanup, and stop criteria.
 - Add `scripts/package_pilot.sh` and expand `docs/PACKAGE.md` for a local pilot artifact with release binary, helper scripts, docs, SHA256, FastEmbed runtime expectations, and cleanup commands.
 - Add progress output for long index runs and a conservative existing-DB same-note-count write skip; document the current resume boundary in `docs/full-vault-progress-resume.md`.
 - Add `scripts/benchmark_vault.sh` and `docs/niels-pilot-benchmark.md` to measure baseline filesystem search, VaultLayer index/search/embed/vector timings, DB size, and provenance sample paths for a target-vault pilot.

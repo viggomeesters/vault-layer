@@ -111,4 +111,4 @@ The two models returned different top vector hits for `agent context`, which con
 
 - The Python `fastembed` package is an optional runtime dependency, not vendored into the repo.
 - First-run model download is expected unless the cache is already populated.
-- Full-vault production runs still need progress/resume hardening before they become unattended release gates.
+- Long full-vault runs now emit progress and can skip an existing same-count SQLite DB rewrite, but content-hash-level incremental updates and resumable partial transactions are still future hardening.

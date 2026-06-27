@@ -16,7 +16,7 @@ Your vault stays plain files. VaultLayer builds a rebuildable shadow database wi
 
 ## Status
 
-Early public MVP. Useful for experiments and architecture work; not production-stable yet.
+Pilot-ready local MVP. Useful for read-only vault pilots and measurable retrieval experiments; not production-stable or fully self-contained yet.
 
 ## Why
 
@@ -99,7 +99,7 @@ VaultLayer treats the source vault as read-only by default.
 - Examples and tests must use synthetic fixtures.
 - Writeback is disabled in the MVP.
 - SQLite + FTS5 is the recommended/default local retrieval backend over `.md` while the vault remains source of truth.
-- sqlite-vec is the intended native local vector path; deterministic JSON cosine remains the fallback until packaging is proven.
+- sqlite-vec is the intended native local vector path; `fastembed-mini-lm` is the working real local embedding model path, while deterministic JSON cosine remains a smoke-test fallback.
 - DuckDB is an optional analytics/export sidecar: set `VAULT_LAYER_BACKEND=duckdb`.
 - Hosted Turso/libSQL is treated as cloud/sync/export target, not the local core.
 
@@ -125,6 +125,7 @@ See [`docs/viewer-adapter.md`](docs/viewer-adapter.md).
 - [`docs/local-embedding-adapter.md`](docs/local-embedding-adapter.md)
 - [`docs/niels-pilot-install.md`](docs/niels-pilot-install.md)
 - [`docs/niels-pilot-benchmark.md`](docs/niels-pilot-benchmark.md)
+- [`docs/niels-pilot-runbook.md`](docs/niels-pilot-runbook.md)
 - [`docs/local-embedding-adapter-blocker.md`](docs/local-embedding-adapter-blocker.md)
 
 ## Verify
@@ -160,12 +161,12 @@ The accepted backend decision is documented in `docs/ADR-0001-primary-retrieval-
 
 ## sqlite-vec status
 
-Native sqlite-vec is feasible and now has a scoped Rust/rusqlite smoke adapter exposed via `vault-layer sqlite-vec-info`; see `docs/sqlite-vec-packaging-spike.md`. Current production vector search keeps deterministic JSON cosine as the portable fallback until sqlite-vec tables are wired into the indexed vault DB.
+Native sqlite-vec is feasible and has a scoped Rust/rusqlite smoke adapter exposed via `vault-layer sqlite-vec-info`; see `docs/sqlite-vec-packaging-spike.md`. `vault-layer embed` refreshes sqlite-vec rows for the selected model, including the working real local `fastembed-mini-lm` path.
 
 
 ## Retrieval benchmark evidence
 
-Current bounded real-vault retrieval benchmark evidence lives in `docs/full-vault-retrieval-benchmark.md`. The full-vault WSL gate is intentionally not treated as unattended-green until progress/resume hardening exists.
+Current bounded real-vault retrieval benchmark evidence lives in `docs/full-vault-retrieval-benchmark.md`. Long index runs now emit progress and can skip rewriting an existing same-count SQLite DB; see `docs/full-vault-progress-resume.md`. Target-vault performance still must be proven per pilot with `scripts/benchmark_vault.sh`.
 
 
 ## Retrieval quality
@@ -175,4 +176,4 @@ Vector fallback results now expose `cosine_score` and `text_quality_score` so lo
 
 ## Hybrid retrieval
 
-`vault-layer embed` now refreshes native sqlite-vec rows when available, `vector-search` prefers native sqlite-vec KNN, and `hybrid-search` reranks FTS candidates with vector, human relevance, and text-quality signals. The current embedding model remains `deterministic-v0`; real local embeddings are a separate adapter layer. See `docs/sqlite-vec-hybrid-retrieval.md`.
+`vault-layer embed` refreshes native sqlite-vec rows when available, `vector-search` prefers native sqlite-vec KNN, and `hybrid-search` reranks FTS candidates with vector, human relevance, and text-quality signals. Use `--model fastembed-mini-lm` for the working real local model path, or `--model deterministic-v0` for smoke tests. See `docs/sqlite-vec-hybrid-retrieval.md` and `docs/local-embedding-adapter.md`.
