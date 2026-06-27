@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `docs/claim-evidence-gate.md` to make self-contained/performance-win language falsifiable and disallow unscoped guarantees until target-vault evidence passes.
 - Align public product claims around “pilot-ready local MVP, not fully self-contained production product” and add `docs/niels-pilot-runbook.md` with safe install, benchmark, success metrics, cleanup, and stop criteria.
 - Add `scripts/package_pilot.sh` and expand `docs/PACKAGE.md` for a local pilot artifact with release binary, helper scripts, docs, SHA256, FastEmbed runtime expectations, and cleanup commands.
 - Add progress output for long index runs and a conservative existing-DB same-note-count write skip; document the current resume boundary in `docs/full-vault-progress-resume.md`.
