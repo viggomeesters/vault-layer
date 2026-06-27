@@ -123,6 +123,7 @@ See [`docs/viewer-adapter.md`](docs/viewer-adapter.md).
 - [`docs/FILL_LOOP.md`](docs/FILL_LOOP.md)
 - [`docs/local-embedding-adapter.md`](docs/local-embedding-adapter.md)
 - [`docs/niels-pilot-install.md`](docs/niels-pilot-install.md)
+- [`docs/niels-pilot-benchmark.md`](docs/niels-pilot-benchmark.md)
 - [`docs/local-embedding-adapter-blocker.md`](docs/local-embedding-adapter-blocker.md)
 
 ## Verify

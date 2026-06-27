@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `scripts/benchmark_vault.sh` and `docs/niels-pilot-benchmark.md` to measure baseline filesystem search, VaultLayer index/search/embed/vector timings, DB size, and provenance sample paths for a target-vault pilot.
 - Add `vault-layer doctor` plus `scripts/pilot_doctor.sh` and `docs/niels-pilot-install.md` so a Niels-style local pilot can verify read-only vault access, local state/cache placement, sqlite-vec, Python FastEmbed, and disabled remote sync before indexing.
 - Add `--model fastembed-mini-lm` for real local Python FastEmbed/ONNX embeddings across `embed`, `vector-search`, and `hybrid-search`, with model cache outside repo/vault and 5000-note deterministic-vs-real evidence in docs.
 
