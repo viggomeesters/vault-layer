@@ -121,6 +121,7 @@ See [`docs/viewer-adapter.md`](docs/viewer-adapter.md).
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - [`docs/REPO_COMPLETE.md`](docs/REPO_COMPLETE.md)
 - [`docs/FILL_LOOP.md`](docs/FILL_LOOP.md)
+- [`docs/full-vault-progress-resume.md`](docs/full-vault-progress-resume.md)
 - [`docs/local-embedding-adapter.md`](docs/local-embedding-adapter.md)
 - [`docs/niels-pilot-install.md`](docs/niels-pilot-install.md)
 - [`docs/niels-pilot-benchmark.md`](docs/niels-pilot-benchmark.md)

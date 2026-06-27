@@ -247,31 +247,48 @@ pub fn scan_vault(vault_path: &Path) -> Result<VaultScan, String> {
 }
 
 pub fn scan_vault_limited(vault_path: &Path, limit: Option<usize>) -> Result<VaultScan, String> {
+    scan_vault_limited_with_progress(vault_path, limit, |_, _| {})
+}
+
+pub fn scan_vault_limited_with_progress<F>(
+    vault_path: &Path,
+    limit: Option<usize>,
+    mut progress: F,
+) -> Result<VaultScan, String>
+where
+    F: FnMut(&str, usize),
+{
     let mut files = Vec::new();
-    collect_markdown_files(vault_path, vault_path, &mut files, limit)?;
+    collect_markdown_files(vault_path, vault_path, &mut files, limit, &mut progress)?;
     files.sort();
     if let Some(limit) = limit {
         files.truncate(limit);
     }
+    progress("scan_files_collected", files.len());
     let vault_id = stable_id("vault", &vault_path.to_string_lossy());
     let mut notes = Vec::new();
-    for relative in files {
+    for (index, relative) in files.into_iter().enumerate() {
         let absolute = vault_path.join(&relative);
         let content = fs::read_to_string(&absolute)
             .map_err(|err| format!("read {}: {err}", absolute.display()))?;
         let metadata = fs::metadata(&absolute)
             .map_err(|err| format!("metadata {}: {err}", absolute.display()))?;
         notes.push(parse_note(&vault_id, &relative, &content, &metadata)?);
+        progress("scan_notes_parsed", index + 1);
     }
     Ok(VaultScan { vault_id, notes })
 }
 
-fn collect_markdown_files(
+fn collect_markdown_files<F>(
     root: &Path,
     current: &Path,
     out: &mut Vec<String>,
     limit: Option<usize>,
-) -> Result<(), String> {
+    progress: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(&str, usize),
+{
     if limit.is_some_and(|max| out.len() >= max) {
         return Ok(());
     }
@@ -291,10 +308,11 @@ fn collect_markdown_files(
             continue;
         }
         if path.is_dir() {
-            collect_markdown_files(root, &path, out, limit)?;
+            collect_markdown_files(root, &path, out, limit, progress)?;
         } else if path.extension().is_some_and(|ext| ext == "md") {
             let relative = path.strip_prefix(root).map_err(|err| err.to_string())?;
             out.push(relative.to_string_lossy().replace('\\', "/"));
+            progress("scan_files_found", out.len());
         }
     }
     Ok(())
@@ -555,6 +573,18 @@ pub fn write_scan_sqlite(
     vault_root: &Path,
     db_path: &Path,
 ) -> Result<(), String> {
+    write_scan_sqlite_with_progress(scan, vault_root, db_path, |_, _| {})
+}
+
+pub fn write_scan_sqlite_with_progress<F>(
+    scan: &VaultScan,
+    vault_root: &Path,
+    db_path: &Path,
+    mut progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(&str, usize),
+{
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("create state dir {}: {err}", parent.display()))?;
@@ -589,7 +619,7 @@ pub fn write_scan_sqlite(
             sql_quote(&vault_root.to_string_lossy())
         )
         .map_err(|err| format!("write vault row: {err}"))?;
-        for note in &scan.notes {
+        for (note_index, note) in scan.notes.iter().enumerate() {
             writeln!(
                 stdin,
                 "INSERT INTO notes(id, vault_id, path, title, modified_unix, content_hash, human_relevance_score) VALUES({}, {}, {}, {}, {}, {}, {:.3});",
@@ -666,6 +696,7 @@ pub fn write_scan_sqlite(
                 )
                 .map_err(|err| format!("write provenance row: {err}"))?;
             }
+            progress("write_notes", note_index + 1);
         }
         writeln!(
             stdin,

@@ -6,8 +6,9 @@ use std::process::Command;
 use vault_layer_core::{
     cosine_similarity, default_state_dir, deterministic_embedding, duckdb_sync_statements,
     embedding_from_json, embedding_to_json, retrieval_text_quality_score, scan_vault_limited,
-    sql_literal, turso_pipeline_request_json, turso_pipeline_url, turso_sync_statements,
-    write_scan_sqlite, RuntimeConfig, StorageBackendConfig, COMMANDS, DEFAULT_STATE_SUBDIR,
+    scan_vault_limited_with_progress, sql_literal, turso_pipeline_request_json, turso_pipeline_url,
+    turso_sync_statements, write_scan_sqlite_with_progress, RuntimeConfig, StorageBackendConfig,
+    COMMANDS, DEFAULT_STATE_SUBDIR,
 };
 use vault_layer_sqlite_vec::{refresh_vec_embeddings, search_vec_embeddings};
 
@@ -237,7 +238,12 @@ fn index_command(args: Vec<String>) {
     let state_dir = state_dir_from_args(args);
     match RuntimeConfig::new(&vault_path, state_dir) {
         Ok(config) => {
-            match scan_vault_limited(&config.vault_path, options.limit.map(|v| v as usize)) {
+            let scan = scan_vault_limited_with_progress(
+                &config.vault_path,
+                options.limit.map(|v| v as usize),
+                print_progress,
+            );
+            match scan {
                 Ok(scan) => {
                     let db_path = match backend.kind {
                         vault_layer_core::StorageBackendKind::LocalDuckdb => {
@@ -260,9 +266,20 @@ fn index_command(args: Vec<String>) {
                         }
                         _ => {
                             let db_path = config.database_path(&scan.vault_id);
-                            if let Err(error) =
-                                write_scan_sqlite(&scan, &config.vault_path, &db_path)
+                            if !options.force
+                                && db_path.exists()
+                                && existing_note_count(&db_path) == Some(scan.notes.len())
                             {
+                                eprintln!(
+                                    "vault-layer progress phase=write_skipped_existing count={}",
+                                    scan.notes.len()
+                                );
+                            } else if let Err(error) = write_scan_sqlite_with_progress(
+                                &scan,
+                                &config.vault_path,
+                                &db_path,
+                                print_progress,
+                            ) {
                                 fail(&format!("index failed: {error}"));
                             }
                             db_path
@@ -280,6 +297,17 @@ fn index_command(args: Vec<String>) {
         }
         Err(error) => fail(&format!("config failed: {error}")),
     }
+}
+
+fn print_progress(phase: &str, count: usize) {
+    if count <= 5 || count % 500 == 0 {
+        eprintln!("vault-layer progress phase={phase} count={count}");
+    }
+}
+
+fn existing_note_count(db_path: &Path) -> Option<usize> {
+    let rows = sqlite_table(&db_path.to_path_buf(), "SELECT count(*) FROM notes");
+    rows.first()?.first()?.parse().ok()
 }
 
 fn write_scan_duckdb(
@@ -888,6 +916,7 @@ struct CliOptions {
     mcp: bool,
     list_tools: bool,
     remote_sync: bool,
+    force: bool,
     embedding_model: Option<String>,
 }
 
@@ -903,6 +932,7 @@ impl CliOptions {
                 "--mcp" => options.mcp = true,
                 "--list-tools" => options.list_tools = true,
                 "--remote-sync" => options.remote_sync = true,
+                "--force" => options.force = true,
                 "--query" => options.query = iter.next(),
                 "--call" => options.call = iter.next(),
                 "--model" => options.embedding_model = iter.next(),
@@ -1165,6 +1195,6 @@ fn fail(message: &str) -> ! {
 
 fn print_help() {
     println!(
-        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init          Initialize config for an external Markdown/Obsidian vault\n    index         Build or refresh the local shadow index outside the repo\n    search        Search indexed vault chunks and return cited JSON results\n    get-note      Return one bounded note with provenance JSON\n    related       Return WikiLink/backlink related notes as JSON\n    embed         Fill selected embedding model rows and native sqlite-vec rows\n    vector-search Search embeddings, preferring native sqlite-vec when available\n    hybrid-search FTS candidates reranked with vector, relevance, and quality\n    context       Build an agent-ready cited context pack\n    serve         Serve MCP interfaces over the local shadow DB\n    backend-info  Report SQLite/Turso/libSQL backend and vector capability mode\n    doctor        Verify local pilot prerequisites without writing to the vault\n    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter\n    sync-turso    Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL\n    --limit <N>           Limit indexed notes/results for smoke runs\n    --model <NAME>        Embedding model: deterministic-v0 or fastembed-mini-lm\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
+        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init          Initialize config for an external Markdown/Obsidian vault\n    index         Build or refresh the local shadow index outside the repo\n    search        Search indexed vault chunks and return cited JSON results\n    get-note      Return one bounded note with provenance JSON\n    related       Return WikiLink/backlink related notes as JSON\n    embed         Fill selected embedding model rows and native sqlite-vec rows\n    vector-search Search embeddings, preferring native sqlite-vec when available\n    hybrid-search FTS candidates reranked with vector, relevance, and quality\n    context       Build an agent-ready cited context pack\n    serve         Serve MCP interfaces over the local shadow DB\n    backend-info  Report SQLite/Turso/libSQL backend and vector capability mode\n    doctor        Verify local pilot prerequisites without writing to the vault\n    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter\n    sync-turso    Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL\n    --force               Rebuild index DB even when existing note count matches\n    --limit <N>           Limit indexed notes/results for smoke runs\n    --model <NAME>        Embedding model: deterministic-v0 or fastembed-mini-lm\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
     );
 }
