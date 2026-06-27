@@ -9,6 +9,7 @@ check:
 	@cargo clippy --workspace --all-targets -- -D warnings
 	@cargo test --workspace
 	@python3 -m py_compile scripts/*.py
+	@bash -n scripts/*.sh
 	@python3 scripts/validate_repository.py
 	@python3 -m unittest discover -s tests -p "test_*.py"
 	@! git ls-files | grep -E '\.(db|sqlite|sqlite3|libsql|duckdb|turso|parquet|arrow)$$'

@@ -27,6 +27,7 @@ fn main() {
         Some("context") => context_command(args.collect()),
         Some("serve") => serve_command(args.collect()),
         Some("backend-info") => backend_info_command(),
+        Some("doctor") => doctor_command(args.collect()),
         Some("sqlite-vec-info") => sqlite_vec_info_command(),
         Some(command) if COMMANDS.contains(&command) => {
             println!("vault-layer {command}: planned MVP subcommand; implementation follows in child tasks");
@@ -110,6 +111,113 @@ fn backend_info_command() {
             "not-configured"
         }
     );
+}
+
+fn doctor_command(args: Vec<String>) {
+    let vault_arg = args
+        .iter()
+        .find(|arg| !arg.starts_with("--"))
+        .map(PathBuf::from);
+    let state_dir = state_dir_from_args(args.clone())
+        .or_else(|| default_state_dir().ok())
+        .unwrap_or_else(|| PathBuf::from(".vault-layer-state"));
+    let cache_dir = fastembed_cache_dir();
+    let backend = StorageBackendConfig::from_env();
+    let mut ok = true;
+
+    println!("vault_layer_doctor=1");
+    println!("read_only_default=true");
+    println!("state_dir={}", state_dir.display());
+    println!("fastembed_cache_dir={}", cache_dir.display());
+    println!("backend={}", backend.backend_name());
+    println!(
+        "remote_sync_disabled_by_default={}",
+        backend.kind != vault_layer_core::StorageBackendKind::TursoRemote
+    );
+    if backend.kind == vault_layer_core::StorageBackendKind::TursoRemote {
+        println!("ERROR remote backend configured; unset TURSO_DATABASE_URL/TURSO_AUTH_TOKEN or set VAULT_LAYER_BACKEND=sqlite for a local pilot");
+        ok = false;
+    }
+
+    match vault_arg.as_ref() {
+        Some(vault_path) => {
+            println!("vault_path={}", vault_path.display());
+            match fs::metadata(vault_path) {
+                Ok(metadata) if metadata.is_dir() => println!("vault_readable=true"),
+                Ok(_) => {
+                    println!("ERROR vault_path_is_not_directory=true");
+                    ok = false;
+                }
+                Err(error) => {
+                    println!("ERROR vault_readable=false error={error}");
+                    ok = false;
+                }
+            }
+            if path_is_within(&state_dir, vault_path) || path_is_within(&cache_dir, vault_path) {
+                println!("ERROR runtime_state_or_cache_inside_vault=true");
+                ok = false;
+            } else {
+                println!("runtime_state_outside_vault=true");
+            }
+        }
+        None => println!("vault_readable=skipped_no_vault_path"),
+    }
+
+    if path_is_within(&state_dir, Path::new(".")) || path_is_within(&cache_dir, Path::new(".")) {
+        println!("ERROR runtime_state_or_cache_inside_repo=true");
+        ok = false;
+    } else {
+        println!("runtime_state_outside_repo=true");
+    }
+
+    match fs::create_dir_all(&state_dir) {
+        Ok(()) => println!("state_dir_writable=true"),
+        Err(error) => {
+            println!("ERROR state_dir_writable=false error={error}");
+            ok = false;
+        }
+    }
+    match fs::create_dir_all(&cache_dir) {
+        Ok(()) => println!("fastembed_cache_writable=true"),
+        Err(error) => {
+            println!("ERROR fastembed_cache_writable=false error={error}");
+            ok = false;
+        }
+    }
+
+    match vault_layer_sqlite_vec::sqlite_vec_smoke() {
+        Ok(smoke) => {
+            println!("sqlite_vec_available=true");
+            println!("sqlite_vec_version={}", smoke.version);
+        }
+        Err(error) => {
+            println!("ERROR sqlite_vec_available=false error={error}");
+            ok = false;
+        }
+    }
+
+    match run_fastembed_helper(&["doctor smoke".to_string()], EmbeddingKind::Query) {
+        Ok(batch) => {
+            println!("fastembed_available=true");
+            println!("fastembed_model={}", batch.model);
+            println!("fastembed_dimensions={}", batch.dimensions);
+        }
+        Err(error) => {
+            println!("ERROR fastembed_available=false error={error}");
+            ok = false;
+        }
+    }
+
+    println!("doctor_status={}", if ok { "ok" } else { "failed" });
+    if !ok {
+        std::process::exit(1);
+    }
+}
+
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    path.starts_with(root)
 }
 
 fn index_command(args: Vec<String>) {
@@ -677,11 +785,24 @@ impl EmbeddingProvider {
     }
 }
 
-fn run_fastembed_helper(texts: &[String], kind: EmbeddingKind) -> Result<EmbeddingBatch, String> {
-    let cache_dir = match env::var_os("VAULT_LAYER_FASTEMBED_CACHE_DIR") {
+fn fastembed_cache_dir() -> PathBuf {
+    match env::var_os("VAULT_LAYER_FASTEMBED_CACHE_DIR") {
         Some(value) if !value.is_empty() => PathBuf::from(value),
-        _ => default_state_dir()?.join("models/fastembed"),
-    };
+        _ => default_state_dir()
+            .unwrap_or_else(|_| PathBuf::from(".vault-layer-state"))
+            .join("models/fastembed"),
+    }
+}
+
+fn fastembed_helper_path() -> PathBuf {
+    match env::var_os("VAULT_LAYER_FASTEMBED_HELPER") {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => PathBuf::from("scripts/fastembed_embed.py"),
+    }
+}
+
+fn run_fastembed_helper(texts: &[String], kind: EmbeddingKind) -> Result<EmbeddingBatch, String> {
+    let cache_dir = fastembed_cache_dir();
     fs::create_dir_all(&cache_dir).map_err(|error| {
         format!(
             "create fastembed cache dir {}: {error}",
@@ -713,7 +834,7 @@ fn run_fastembed_helper(texts: &[String], kind: EmbeddingKind) -> Result<Embeddi
 
     let python = env::var("VAULT_LAYER_FASTEMBED_PYTHON").unwrap_or_else(|_| "python3".to_string());
     let output = Command::new(python)
-        .arg("scripts/fastembed_embed.py")
+        .arg(fastembed_helper_path())
         .arg(&input_path)
         .output()
         .map_err(|error| format!("start fastembed helper: {error}"));
@@ -1044,6 +1165,6 @@ fn fail(message: &str) -> ! {
 
 fn print_help() {
     println!(
-        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init          Initialize config for an external Markdown/Obsidian vault\n    index         Build or refresh the local shadow index outside the repo\n    search        Search indexed vault chunks and return cited JSON results\n    get-note      Return one bounded note with provenance JSON\n    related       Return WikiLink/backlink related notes as JSON\n    embed         Fill selected embedding model rows and native sqlite-vec rows\n    vector-search Search embeddings, preferring native sqlite-vec when available\n    hybrid-search FTS candidates reranked with vector, relevance, and quality\n    context       Build an agent-ready cited context pack\n    serve         Serve MCP interfaces over the local shadow DB\n    backend-info  Report SQLite/Turso/libSQL backend and vector capability mode\n    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter\n    sync-turso    Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL\n    --limit <N>           Limit indexed notes/results for smoke runs\n    --model <NAME>        Embedding model: deterministic-v0 or fastembed-mini-lm\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
+        "VaultLayer\n\nUSAGE:\n    vault-layer <COMMAND> [OPTIONS]\n\nCOMMANDS:\n    init          Initialize config for an external Markdown/Obsidian vault\n    index         Build or refresh the local shadow index outside the repo\n    search        Search indexed vault chunks and return cited JSON results\n    get-note      Return one bounded note with provenance JSON\n    related       Return WikiLink/backlink related notes as JSON\n    embed         Fill selected embedding model rows and native sqlite-vec rows\n    vector-search Search embeddings, preferring native sqlite-vec when available\n    hybrid-search FTS candidates reranked with vector, relevance, and quality\n    context       Build an agent-ready cited context pack\n    serve         Serve MCP interfaces over the local shadow DB\n    backend-info  Report SQLite/Turso/libSQL backend and vector capability mode\n    doctor        Verify local pilot prerequisites without writing to the vault\n    sqlite-vec-info Smoke native sqlite-vec availability via the scoped Rust adapter\n    sync-turso    Write the scanned vault index to Turso/libSQL via HTTPS pipeline\n\nOPTIONS:\n    --state-dir <PATH>    Runtime state directory; default: ~/{DEFAULT_STATE_SUBDIR}\n    --db <PATH>           Shadow DB path for retrieval commands\n    --remote-sync         With TURSO_DATABASE_URL, index writes to Turso/libSQL\n    --limit <N>           Limit indexed notes/results for smoke runs\n    --model <NAME>        Embedding model: deterministic-v0 or fastembed-mini-lm\n    --json                JSON output (retrieval commands already emit JSON)\n\nSAFETY:\n    Vault files are read-only by default. DB/index/vector artifacts must live outside the repo."
     );
 }

@@ -122,6 +122,7 @@ See [`docs/viewer-adapter.md`](docs/viewer-adapter.md).
 - [`docs/REPO_COMPLETE.md`](docs/REPO_COMPLETE.md)
 - [`docs/FILL_LOOP.md`](docs/FILL_LOOP.md)
 - [`docs/local-embedding-adapter.md`](docs/local-embedding-adapter.md)
+- [`docs/niels-pilot-install.md`](docs/niels-pilot-install.md)
 - [`docs/local-embedding-adapter-blocker.md`](docs/local-embedding-adapter-blocker.md)
 
 ## Verify

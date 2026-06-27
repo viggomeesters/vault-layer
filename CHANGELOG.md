@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Add `--model fastembed-mini-lm` for real local Python FastEmbed/ONNX embeddings across `embed`, `vector-search`, and `hybrid-search`, with model cache outside repo/vault and 5000-note deterministic-vs-real evidence.
+- Add `vault-layer doctor` plus `scripts/pilot_doctor.sh` and `docs/niels-pilot-install.md` so a Niels-style local pilot can verify read-only vault access, local state/cache placement, sqlite-vec, Python FastEmbed, and disabled remote sync before indexing.
+- Add `--model fastembed-mini-lm` for real local Python FastEmbed/ONNX embeddings across `embed`, `vector-search`, and `hybrid-search`, with model cache outside repo/vault and 5000-note deterministic-vs-real evidence in docs.
 
 - Record the Rust-crate local embedding adapter blocker for `fastembed`/local ONNX under Cargo 1.75 and harden `embeddings` to keep `(chunk_id, model)` rows with explicit dimensions for deterministic-v0 vs real model comparison.
 
