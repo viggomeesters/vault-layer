@@ -10,23 +10,39 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![gate: make check](https://img.shields.io/badge/gate-make%20check-0f766e)](#verify)
 
-**VaultLayer is a local-first database and retrieval layer for huge Markdown/Obsidian vaults.**
+**Stop making agents crawl your vault. Give them a local read model instead.**
 
-Your vault stays plain files. VaultLayer builds a rebuildable shadow database with metadata, WikiLinks, FTS, vectors, citations, human relevance scores, CLI, and MCP tools so humans and agents do not have to crawl 100k notes every time.
+VaultLayer turns a Markdown/Obsidian vault into a rebuildable local database with full-text search, vectors, WikiLinks, metadata, provenance, and CLI/MCP access. Your vault stays plain files. The generated index, embeddings, benchmark reports, and caches live outside the vault and outside the repo.
 
-## Status
+## Why download this?
 
-Pilot-ready local MVP. Useful for read-only vault pilots and measurable retrieval experiments; not production-stable or fully self-contained yet.
+Download VaultLayer if you have a serious Markdown/Obsidian vault and want to:
 
-## Why
+- query it without repeatedly scanning folders and parsing Markdown;
+- give agents bounded, cited context instead of dumping broad filesystem reads into prompts;
+- keep the vault as source of truth while generating disposable search/vector state elsewhere;
+- preserve provenance for every result: path, heading/chunk id, content hash, modified time, and excerpt;
+- compare raw filesystem search vs indexed retrieval with a repeatable benchmark;
+- prototype local-first vault retrieval before committing to a viewer, MCP server, or cloud sync story.
 
-Obsidian is excellent as a human writing surface, but very large vaults need a fast read model. Agents also need bounded, cited, queryable context instead of broad filesystem scans.
-
-VaultLayer provides the shared engine:
+## What you get
 
 ```text
-Markdown/Obsidian vault -> VaultLayer index DB -> CLI/MCP/Viewer
+Markdown/Obsidian vault -> external VaultLayer DB -> CLI / MCP / viewer / benchmark
 ```
+
+Current pilot includes:
+
+- read-only indexing of Markdown/Obsidian-style vaults;
+- SQLite + FTS5 local search by default;
+- sqlite-vec + real local FastEmbed MiniLM vector retrieval;
+- deterministic synthetic messy-vault preflight;
+- package, doctor, and benchmark scripts;
+- safety guards against committing private vault content or generated DB/cache artifacts.
+
+## What this is not yet
+
+VaultLayer is a **pilot-ready local MVP**, not a production product or a guaranteed speedup for every vault. Performance depends on vault size, filesystem, machine, query shape, and first-run model/cache setup. The repo gives you a safe way to test and measure that locally.
 
 ## Quick start
 
@@ -37,7 +53,20 @@ make check
 cargo run -p vault-layer -- --help
 ```
 
-Index a small synthetic or local test vault:
+Prove the flow on a generated messy fake vault, without touching a real vault:
+
+```bash
+python3 scripts/make_messy_vault.py /tmp/vault-layer-messy --force
+scripts/package_smoke.sh /tmp/vault-layer-messy --work-dir /tmp/vault-layer-package-smoke
+scripts/benchmark_vault.sh /tmp/vault-layer-messy \
+  --state-dir /tmp/vault-layer-benchmark \
+  --query "performance baseline vector provenance" \
+  --limit 500
+```
+
+Expected proof points: `package_smoke=ok`, `doctor_status=ok`, `runtime_outside_vault=true`, indexed notes/sections, local embeddings, and benchmark timings.
+
+Index your own local vault when you are ready:
 
 ```bash
 cargo run -p vault-layer -- index /path/to/vault --state-dir ~/.local/share/vault-layer --limit 20

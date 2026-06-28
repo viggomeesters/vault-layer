@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rewrite the README opening around the product proposition: why to download VaultLayer, what it gives, what it is not yet, and a local messy-vault proof flow.
 - Add `scripts/make_messy_vault.py` and `docs/synthetic-messy-vault-preflight.md`; package smoke and benchmark now have a deterministic fake messy-vault preflight before Niels private-vault testing.
 - Add `scripts/package_smoke.sh` and include the claim gate in the pilot package so the tarball is verified from outside the repo with explicit FastEmbed helper paths and no bundled runtime/private artifacts.
 - Add `docs/claim-evidence-gate.md` to make self-contained/performance-win language falsifiable and disallow unscoped guarantees until target-vault evidence passes.
