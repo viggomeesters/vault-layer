@@ -127,6 +127,7 @@ See [`docs/viewer-adapter.md`](docs/viewer-adapter.md).
 - [`docs/niels-pilot-install.md`](docs/niels-pilot-install.md)
 - [`docs/niels-pilot-benchmark.md`](docs/niels-pilot-benchmark.md)
 - [`docs/niels-pilot-runbook.md`](docs/niels-pilot-runbook.md)
+- [`docs/synthetic-messy-vault-preflight.md`](docs/synthetic-messy-vault-preflight.md)
 - [`docs/local-embedding-adapter-blocker.md`](docs/local-embedding-adapter-blocker.md)
 
 ## Verify
