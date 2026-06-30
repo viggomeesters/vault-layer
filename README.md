@@ -6,6 +6,8 @@
 
 # VaultLayer
 
+Project page: <https://viggomeesters.com/vault-layer/>
+
 [![status: early](https://img.shields.io/badge/status-early-orange)](#status)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![gate: make check](https://img.shields.io/badge/gate-make%20check-0f766e)](#verify)
